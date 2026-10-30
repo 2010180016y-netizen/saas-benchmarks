@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://saas-benchmarks.pages.dev/sitemap.xml

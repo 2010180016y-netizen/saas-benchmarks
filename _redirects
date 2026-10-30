@@ -1,0 +1,3 @@
+# Cloudflare Pages Edge Redirects (307 Temporary Affiliate Redirects)
+/make  https://www.make.com/en/register?pc=buykoreanow  307
+/zapier  https://zapier.com  307
