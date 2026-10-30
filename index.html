@@ -43,32 +43,60 @@
       </p>
     </div>
 
-    <!-- Featured Benchmark Card -->
+        <!-- Featured Benchmarks Grid (2 Top Flagships) -->
     <section class="mb-16">
-      <h2 class="text-xs uppercase tracking-widest text-emerald-400 font-bold mb-4 font-mono">Featured Deep Dive</h2>
-      <a href="/make-vs-zapier/" class="block group bg-slate-900 border border-slate-800 hover:border-emerald-500/50 rounded-2xl p-6 md:p-8 transition-all duration-300 hover:shadow-2xl hover:shadow-emerald-950/50">
-        <div class="flex flex-col md:flex-row gap-8 items-center">
-          <div class="w-full md:w-1/2 rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
-            <img src="/assets/make_vs_zapier_comparison_2026.png" alt="Make.com vs Zapier 2026 Benchmark Infographic" class="w-full h-auto object-cover group-hover:scale-105 transition duration-500">
-          </div>
-          <div class="w-full md:w-1/2">
-            <div class="flex items-center space-x-3 mb-3">
-              <span class="text-xs font-semibold px-2.5 py-1 rounded bg-emerald-950 border border-emerald-800 text-emerald-400">Head-to-Head</span>
-              <span class="text-xs text-slate-500 font-mono">Published Oct 30, 2026</span>
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-xs uppercase tracking-widest text-indigo-400 font-bold font-mono">Featured Deep Dives (PSA Sourced)</h2>
+        <span class="text-xs bg-indigo-950 text-indigo-300 border border-indigo-800 px-2.5 py-1 rounded-full font-mono">Live 2026 Benchmarks</span>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <!-- Card 1: Cursor AI (PSA 96.2) -->
+        <a href="/cursor-vs-copilot/" class="block group bg-slate-900 border border-slate-800 hover:border-indigo-500 rounded-2xl p-6 transition-all duration-300 hover:shadow-2xl hover:shadow-indigo-950/50 flex flex-col justify-between">
+          <div>
+            <div class="rounded-xl overflow-hidden border border-slate-800 bg-slate-950 mb-5">
+              <img src="/assets/cursor_vs_copilot_vs_windsurf_2026.png" alt="Cursor vs Copilot vs Windsurf Infographic" class="w-full h-auto object-cover group-hover:scale-105 transition duration-500">
             </div>
-            <h3 class="text-2xl font-bold text-white group-hover:text-emerald-300 transition mb-3">
-              Make.com vs Zapier (2026): The Honest Cost & Limits Comparison (Why Solopreneurs Are Switching)
+            <div class="flex items-center space-x-2 mb-2">
+              <span class="text-xs font-bold px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 font-mono">AI Code Editor</span>
+              <span class="text-xs text-emerald-400 font-mono font-bold">PSA 96.2 · Top Pick</span>
+            </div>
+            <h3 class="text-xl font-bold text-white group-hover:text-indigo-300 transition mb-2">
+              Cursor AI vs Copilot vs Windsurf: Which Delivers $50k in Solo Dev Output?
             </h3>
-            <p class="text-slate-400 text-sm leading-relaxed mb-6">
-              Zapier's $19.99/mo tier caps out at 750 tasks. Make gives you 10,000 operations for $9/mo. We benchmarked execution speed, multi-branching logic, and error recovery to determine which actually saves money.
+            <p class="text-slate-400 text-xs leading-relaxed mb-4">
+              Multi-file Composer agent execution speed, codebase indexing depth, and our exclusive master .cursorrules pack ($99 value).
             </p>
-            <div class="flex items-center justify-between text-xs text-slate-400 border-t border-slate-800/80 pt-4 font-mono">
-              <span class="text-emerald-400 font-bold">Winner: Make.com (29x Cost Arbitrage)</span>
-              <span class="group-hover:translate-x-1 transition text-white">Read Full Benchmark →</span>
-            </div>
           </div>
-        </div>
-      </a>
+          <div class="flex items-center justify-between text-xs text-indigo-400 font-mono border-t border-slate-800/80 pt-4">
+            <span class="font-bold">Includes 10x .cursorrules Pack</span>
+            <span class="group-hover:translate-x-1 transition text-white">Read Benchmark →</span>
+          </div>
+        </a>
+
+        <!-- Card 2: Make.com vs Zapier (PSA 95.3) -->
+        <a href="/make-vs-zapier/" class="block group bg-slate-900 border border-slate-800 hover:border-emerald-500 rounded-2xl p-6 transition-all duration-300 hover:shadow-2xl hover:shadow-emerald-950/50 flex flex-col justify-between">
+          <div>
+            <div class="rounded-xl overflow-hidden border border-slate-800 bg-slate-950 mb-5">
+              <img src="/assets/make_vs_zapier_comparison_2026.png" alt="Make.com vs Zapier Infographic" class="w-full h-auto object-cover group-hover:scale-105 transition duration-500">
+            </div>
+            <div class="flex items-center space-x-2 mb-2">
+              <span class="text-xs font-bold px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono">Workflow Automation</span>
+              <span class="text-xs text-emerald-400 font-mono font-bold">PSA 95.3 · Winner</span>
+            </div>
+            <h3 class="text-xl font-bold text-white group-hover:text-emerald-300 transition mb-2">
+              Make.com vs Zapier: The Honest Cost &amp; Limits Comparison
+            </h3>
+            <p class="text-slate-400 text-xs leading-relaxed mb-4">
+              Zapier's $19.99/mo tier caps at 750 tasks. Make gives 10,000 ops for $9/mo. 29x cost arbitrage benchmarked.
+            </p>
+          </div>
+          <div class="flex items-center justify-between text-xs text-emerald-400 font-mono border-t border-slate-800/80 pt-4">
+            <span class="font-bold">Winner: Make.com (29x Cheaper)</span>
+            <span class="group-hover:translate-x-1 transition text-white">Read Benchmark →</span>
+          </div>
+        </a>
+      </div>
     </section>
 
     <!-- Upcoming Benchmarks Grid -->

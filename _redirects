@@ -1,3 +1,6 @@
-# Cloudflare Pages Edge Redirects (307 Temporary Affiliate Redirects)
+# Cloudflare Edge 307 Affiliate Redirects
 /make  https://www.make.com/en/register?pc=buykoreanow  307
 /zapier  https://zapier.com  307
+/cursor  https://www.cursor.com  307
+/copilot  https://github.com/features/copilot  307
+/windsurf  https://codeium.com/windsurf  307
