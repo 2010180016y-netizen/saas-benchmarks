@@ -144,57 +144,11 @@ def create_inquiry(
 
 def dispatch_1to1_offer(db: DatabaseManager, inquiry_id: str) -> Optional[Dict[str, Any]]:
     """
-    FR-05: Finds the single best available partner slot in district and dispatches
-    a 15-minute exclusive assignment offer.
+    FR-05 & SBK-FIX-05: Unified Single Dispatch Entrypoint.
+    Eliminates duplicated dispatch logic (B11) and delegates to deterministic matching engine.
     """
-    inq = db.execute("SELECT * FROM inquiries WHERE id = ? AND status = 'PENDING_MATCH'", (inquiry_id,)).fetchone()
-    if not inq:
-        return None
-
-    # Find matching available slot from verified partner
-    query = """
-        SELECT cs.id AS slot_id, cs.partner_id, cs.slot_date, cs.time_window, p.rating_average
-        FROM capacity_slots cs
-        JOIN partners p ON cs.partner_id = p.id
-        JOIN service_areas sa ON sa.partner_id = p.id
-        WHERE cs.slot_date = ? 
-          AND cs.status = 'AVAILABLE'
-          AND p.verification_status = 'APPROVED'
-          AND sa.district = ?
-          AND sa.is_active = 1
-        ORDER BY p.rating_average DESC, p.total_completed_count DESC
-        LIMIT 1
-    """
-    slot = db.execute(query, (inq["requested_date"], inq["district"])).fetchone()
-    if not slot:
-        return None
-
-    offer_id = f"off_{uuid.uuid4()}"
-    now = datetime.now(timezone.utc)
-    expires_at = (now + timedelta(minutes=15)).isoformat()
-    now_iso = now.isoformat()
-
-    # Mark slot OFFERED
-    db.execute("UPDATE capacity_slots SET status = 'OFFERED', updated_at = ? WHERE id = ?", (now_iso, slot["slot_id"]))
-    # Mark inquiry OFFERED
-    db.execute("UPDATE inquiries SET status = 'OFFERED', updated_at = ? WHERE id = ?", (now_iso, inquiry_id))
-
-    # Insert Offer
-    db.execute(
-        """
-        INSERT INTO assignment_offers (id, inquiry_id, partner_id, slot_id, priority, status, expires_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 1, 'PENDING', ?, ?, ?)
-        """,
-        (offer_id, inquiry_id, slot["partner_id"], slot["slot_id"], expires_at, now_iso, now_iso)
-    )
-    db.commit()
-
-    return {
-        "offer_id": offer_id,
-        "partner_id": slot["partner_id"],
-        "slot_id": slot["slot_id"],
-        "expires_at": expires_at
-    }
+    from .matching import evaluate_and_dispatch_candidates
+    return evaluate_and_dispatch_candidates(db, inquiry_id)
 
 def accept_offer(db: DatabaseManager, offer_id: str, partner_id: str) -> Dict[str, Any]:
     """

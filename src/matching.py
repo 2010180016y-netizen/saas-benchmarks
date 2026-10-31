@@ -138,6 +138,23 @@ def evaluate_and_dispatch_candidates(
     if not inq:
         raise EngineError("INQUIRY_NOT_FOUND", "인입 정보를 찾을 수 없습니다.", 404)
 
+    # Disallow dispatching cancelled or already matched inquiries (B13)
+    if inq["status"] in ("CANCELLED", "MATCHED", "FULFILLED", "BOOKED", "COMPLETED", "VERIFIED", "BILLABLE"):
+        return None
+
+    # Verify statutory consent (PIPC Art. 17) before dispatching to any partner
+    consent = db.execute(
+        """
+        SELECT agreed_privacy_collection, agreed_third_party_share
+        FROM consent_events
+        WHERE inquiry_id = ?
+        ORDER BY consented_at DESC LIMIT 1
+        """,
+        (inquiry_id,)
+    ).fetchone()
+    if not consent or consent["agreed_privacy_collection"] != 1 or consent["agreed_third_party_share"] != 1:
+        return None
+
     # 1. Fetch all candidate slots
     query = """
         SELECT 
@@ -261,13 +278,36 @@ def evaluate_and_dispatch_candidates(
         """,
         (offer_id, inquiry_id, winner["partner_id"], winner["slot_id"], expires_at, now_iso, now_iso)
     )
+
+    # Queue $0 mock notification into notification_outbox for zero-cost operation (B12)
+    notif_id = f"notif_{uuid.uuid4()}"
+    notif_payload = {
+        "offer_id": offer_id,
+        "inquiry_id": inquiry_id,
+        "district": inq["district"],
+        "requested_date": inq["requested_date"],
+        "time_window": inq["time_window"] if ("time_window" in inq.keys() and inq["time_window"]) else "MORNING",
+        "expires_at": expires_at,
+        "channel": "MOCKED_SMS"
+    }
+    db.execute(
+        """
+        INSERT INTO notification_outbox (
+            id, recipient_type, recipient_destination, notification_type, payload, status, created_at
+        ) VALUES (?, 'PARTNER', ?, 'OFFER_ALERT', ?, 'MOCKED', ?)
+        """,
+        (notif_id, winner["partner_id"], json.dumps(notif_payload), now_iso)
+    )
+
     db.commit()
 
     return {
         "offer_id": offer_id,
         "inquiry_id": inquiry_id,
+        "partner_id": winner["partner_id"],
         "selected_partner_id": winner["partner_id"],
         "selected_partner_name": winner["partner_name"],
+        "slot_id": winner["slot_id"],
         "score": winner["score"],
         "expires_at": expires_at,
         "total_evaluated_count": len(candidates),
