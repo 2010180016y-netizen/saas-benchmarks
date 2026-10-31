@@ -271,7 +271,7 @@ def run_50_case_dry_run(db_path: str = ":memory:"):
     csv_path = "docs/product/RECONCILIATION_PROOF.csv"
     os.makedirs(os.path.dirname(csv_path), exist_ok=True)
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["entry_id", "match_id", "debit_account", "credit_account", "amount_krw", "description"])
+        writer = csv.DictWriter(f, fieldnames=["entry_id", "match_id", "debit_account", "credit_account", "amount_krw", "description"], lineterminator="\n")
         writer.writeheader()
         writer.writerows(csv_rows)
 
