@@ -134,6 +134,17 @@ export default {
       return await handleApiRequest(request, url, env);
     }
 
+    // SBK-MINI-01 Defense-in-depth: Block static web access to private internal paths
+    const privatePrefixes = ["/src", "/docs", "/tests", "/migrations", "/scripts", "/.git"];
+    for (const prefix of privatePrefixes) {
+      if (url.pathname === prefix || url.pathname.startsWith(prefix + "/")) {
+        return new Response("Not Found", { status: 404 });
+      }
+    }
+    if (url.pathname.startsWith("/.env") || url.pathname.endsWith(".py") || url.pathname.endsWith(".sql")) {
+      return new Response("Not Found", { status: 404 });
+    }
+
     // Fallback to static assets (SaaS comparisons, images, redirects, slotbridge HTML)
     if (env.ASSETS) {
       return await env.ASSETS.fetch(request);

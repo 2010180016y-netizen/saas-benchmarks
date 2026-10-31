@@ -1,3 +1,36 @@
-.git
+# Version Control & Tooling Config
+.git/
+.gitignore
 .assetsignore
 wrangler.json
+wrangler.toml
+
+# Internal Backend Source Code & Domain Engines
+src/
+src/**
+
+# Internal Documentation, Specifications & Audit Reports
+docs/
+docs/**
+
+# Test Suites & Fixtures
+tests/
+tests/**
+
+# Database DDL Migrations & Schemas
+migrations/
+migrations/**
+
+# Operational, CI & Simulation Scripts
+scripts/
+scripts/**
+
+# Python Runtime Artifacts
+__pycache__/
+*.py
+*.pyc
+*.pyo
+
+# Environment & Secret Templates
+.env*
+*.env
