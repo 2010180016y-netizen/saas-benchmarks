@@ -165,23 +165,61 @@ export default {
   },
 };
 
+function checkD1Database(env) {
+  if (!env.DB) {
+    return errorResponse(
+      "SERVICE_UNAVAILABLE",
+      "D1 데이터베이스 바인딩이 누락되었습니다. 실거래 데이터 저장 및 조회가 불가합니다 (Fail-Closed).",
+      503
+    );
+  }
+  return null;
+}
+
+function checkOperatorReleaseGate(env) {
+  // Hard blocker: Operator approval cannot be overridden by client query params, headers, or body
+  const isApproved = (env.SBK_OPERATOR_APPROVAL === "1" || env.SBK_OPERATOR_APPROVAL === "true");
+  if (!isApproved) {
+    return errorResponse(
+      "OPERATOR_APPROVAL_REQUIRED",
+      "운영자(회기님)의 정식 승인 및 오프라인 3대 게이트(계약/사업자/법률)가 체결되지 않아 실거래 및 고객 접수가 안전하게 동결(BLOCKED_EXTERNAL)되어 있습니다.",
+      503
+    );
+  }
+  return null;
+}
+
 async function handleApiRequest(request, url, env) {
   const path = url.pathname.replace("/api/v1/slotbridge", "");
   const method = request.method;
 
-  // 1. Health Check
+  // 1. Health & Gate Status Endpoint
   if (path === "/health" || path === "") {
+    const isApproved = (env.SBK_OPERATOR_APPROVAL === "1" || env.SBK_OPERATOR_APPROVAL === "true");
+    const d1Connected = Boolean(env.DB);
     return jsonResponse({
       ok: true,
       service: "SlotBridge Korea Engine API",
-      version: "1.1.0",
-      d1_connected: Boolean(env.DB),
+      version: "1.2.0",
+      d1_connected: d1Connected,
+      release_gate: {
+        operator_approved: isApproved,
+        status: (isApproved && d1Connected) ? "READY" : "BLOCKED_EXTERNAL",
+        offline_gates_required: [
+          "GATE-01: 법률 자문 최종 확인 (통판중개 면책)",
+          "GATE-02: 관악·동작 1차 시공 파트너 서명 LOI 체결",
+          "GATE-03: 세무 사업자등록 및 정산 전용 계좌 개설"
+        ]
+      },
       time: new Date().toISOString(),
     });
   }
 
   // 1.1 Attribution Token Issue: GET /attribution/token?partner_id=...
   if (path === "/attribution/token" && method === "GET") {
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
+
     const partnerId = url.searchParams.get("partner_id");
     const campaignId = url.searchParams.get("campaign_id") || "overflow_widget";
 
@@ -189,23 +227,21 @@ async function handleApiRequest(request, url, env) {
       return errorResponse("PARTNER_ID_REQUIRED", "partner_id 파라미터가 필요합니다.", 400);
     }
 
-    if (env.DB) {
-      const partner = await env.DB.prepare(
-        "SELECT id, verification_status FROM partners WHERE id = ?"
-      ).bind(partnerId).first();
+    const partner = await env.DB.prepare(
+      "SELECT id, verification_status FROM partners WHERE id = ?"
+    ).bind(partnerId).first();
 
-      if (!partner || !["APPROVED", "VERIFIED"].includes(partner.verification_status)) {
-        return errorResponse("PARTNER_INACTIVE", "승인된 활성 파트너만 위젯 서명 토큰을 발급받을 수 있습니다.", 403);
-      }
-
-      // Increment click stats
-      const nowIso = new Date().toISOString();
-      await env.DB.prepare(
-        `INSERT INTO campaign_attributions (id, partner_id, campaign_name, clicks_count, conversions_count, created_at, updated_at)
-         VALUES (?, ?, ?, 1, 0, ?, ?)
-         ON CONFLICT(partner_id, campaign_name) DO UPDATE SET clicks_count = clicks_count + 1, updated_at = ?`
-      ).bind("camp_" + crypto.randomUUID(), partnerId, campaignId, nowIso, nowIso, nowIso).run().catch(() => {});
+    if (!partner || !["APPROVED", "VERIFIED"].includes(partner.verification_status)) {
+      return errorResponse("PARTNER_INACTIVE", "승인된 활성 파트너만 위젯 서명 토큰을 발급받을 수 있습니다.", 403);
     }
+
+    // Increment click stats
+    const nowIso = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO campaign_attributions (id, partner_id, campaign_name, clicks_count, conversions_count, created_at, updated_at)
+       VALUES (?, ?, ?, 1, 0, ?, ?)
+       ON CONFLICT(partner_id, campaign_name) DO UPDATE SET clicks_count = clicks_count + 1, updated_at = ?`
+    ).bind("camp_" + crypto.randomUUID(), partnerId, campaignId, nowIso, nowIso, nowIso).run().catch(() => {});
 
     let token;
     try {
@@ -224,6 +260,12 @@ async function handleApiRequest(request, url, env) {
 
   // 2. Inquiries: POST /inquiries
   if (path === "/inquiries" && method === "POST") {
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
+
+    const gateErr = checkOperatorReleaseGate(env);
+    if (gateErr) return gateErr;
+
     try {
       const body = await request.json();
 
@@ -281,43 +323,41 @@ async function handleApiRequest(request, url, env) {
       const nowIso = new Date().toISOString();
       const expiresAt = new Date(Date.now() + 72 * 3600 * 1000).toISOString();
 
-      if (env.DB) {
-        // Execute D1 Insert matching 0001_initial_schema.sql
-        await env.DB.prepare(
-          `INSERT INTO inquiries (
-            id, tracking_token, district, neighborhood, housing_type, area_pyeong,
-            requested_date, time_window, customer_name_encrypted, customer_phone_encrypted,
-            customer_phone_hash, attribution_partner_id, status, expires_at, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_MATCH', ?, ?, ?)`
+      // Execute D1 Insert matching 0001_initial_schema.sql
+      await env.DB.prepare(
+        `INSERT INTO inquiries (
+          id, tracking_token, district, neighborhood, housing_type, area_pyeong,
+          requested_date, time_window, customer_name_encrypted, customer_phone_encrypted,
+          customer_phone_hash, attribution_partner_id, status, expires_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_MATCH', ?, ?, ?)`
+      )
+        .bind(
+          inquiryId,
+          trackingToken,
+          district,
+          neighborhood,
+          housingType,
+          areaPyeong,
+          requestedDate,
+          timeWindow,
+          encName,
+          encPhone,
+          phone.replace(/[^0-9]/g, ""),
+          attributionPartnerId,
+          expiresAt,
+          nowIso,
+          nowIso
         )
-          .bind(
-            inquiryId,
-            trackingToken,
-            district,
-            neighborhood,
-            housingType,
-            areaPyeong,
-            requestedDate,
-            timeWindow,
-            encName,
-            encPhone,
-            phone.replace(/[^0-9]/g, ""),
-            attributionPartnerId,
-            expiresAt,
-            nowIso,
-            nowIso
-          )
-          .run();
+        .run();
 
-        // Record Consent Event
-        await env.DB.prepare(
-          `INSERT INTO consent_events (
-            id, inquiry_id, terms_version, agreed_privacy_collection, agreed_third_party_share, agreed_marketing, client_ip_hash, user_agent, consented_at
-          ) VALUES (?, ?, 'v1.0-20261031', 1, 1, ?, 'hash_cf_worker', 'CloudflareEdge', ?)`
-        )
-          .bind("cst_" + crypto.randomUUID(), inquiryId, body.agreed_marketing ? 1 : 0, nowIso)
-          .run();
-      }
+      // Record Consent Event
+      await env.DB.prepare(
+        `INSERT INTO consent_events (
+          id, inquiry_id, terms_version, agreed_privacy_collection, agreed_third_party_share, agreed_marketing, client_ip_hash, user_agent, consented_at
+        ) VALUES (?, ?, 'v1.0-20261031', 1, 1, ?, 'hash_cf_worker', 'CloudflareEdge', ?)`
+      )
+        .bind("cst_" + crypto.randomUUID(), inquiryId, body.agreed_marketing ? 1 : 0, nowIso)
+        .run();
 
       return jsonResponse(
         {
@@ -346,93 +386,78 @@ async function handleApiRequest(request, url, env) {
   // 3. Inquiry Status: GET /inquiries/:token
   const matchInq = path.match(/^\/inquiries\/([a-zA-Z0-9_-]+)$/);
   if (matchInq && method === "GET") {
-    const token = matchInq[1];
-    if (env.DB) {
-      const row = await env.DB.prepare("SELECT * FROM inquiries WHERE tracking_token = ?").bind(token).first();
-      if (!row) {
-        return errorResponse("INQUIRY_NOT_FOUND", "신청 내역을 찾을 수 없습니다.", 404);
-      }
-      return jsonResponse({
-        ok: true,
-        inquiry_id: row.id,
-        tracking_token: row.tracking_token,
-        status: row.status,
-        district: row.district,
-        neighborhood: row.neighborhood,
-        housing_type: row.housing_type,
-        area_pyeong: row.area_pyeong,
-        requested_date: row.requested_date,
-        time_window: row.time_window,
-        masked_phone: maskPhone(row.customer_phone_hash || "01000000000"),
-        created_at: row.created_at,
-      });
-    }
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
 
-    // Demo fallback when DB not bound
+    const token = matchInq[1];
+    const row = await env.DB.prepare("SELECT * FROM inquiries WHERE tracking_token = ?").bind(token).first();
+    if (!row) {
+      return errorResponse("INQUIRY_NOT_FOUND", "신청 내역을 찾을 수 없습니다.", 404);
+    }
     return jsonResponse({
       ok: true,
-      inquiry_id: "inq_demo",
-      status: "SUBMITTED",
-      district: "서울 관악구",
-      neighborhood: "봉천동",
-      housing_type: "STUDIO",
-      area_pyeong: 8,
-      requested_date: new Date().toISOString().split("T")[0],
-      requested_time_window: "MORNING",
-      masked_phone: "010-****-5678",
-      demo_mode: true,
+      inquiry_id: row.id,
+      tracking_token: row.tracking_token,
+      status: row.status,
+      district: row.district,
+      neighborhood: row.neighborhood,
+      housing_type: row.housing_type,
+      area_pyeong: row.area_pyeong,
+      requested_date: row.requested_date,
+      time_window: row.time_window,
+      masked_phone: maskPhone(row.customer_phone_hash || "01000000000"),
+      created_at: row.created_at,
     });
   }
 
   // 4. Inquiry Revoke: DELETE /inquiries/:token
   if (matchInq && method === "DELETE") {
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
+
     const token = matchInq[1];
     const nowIso = new Date().toISOString();
 
-    if (env.DB) {
-      const inq = await env.DB.prepare("SELECT id FROM inquiries WHERE tracking_token = ?").bind(token).first();
-      if (!inq) {
-        return errorResponse("INQUIRY_NOT_FOUND", "신청 내역을 찾을 수 없습니다.", 404);
-      }
-
-      await env.DB.prepare(
-        `UPDATE inquiries SET 
-          status = 'CANCELLED',
-          customer_name_encrypted = 'ERASED_NAME',
-          customer_phone_encrypted = 'ERASED_PHONE',
-          customer_phone_hash = 'ERASED_HASH',
-          updated_at = ?
-        WHERE tracking_token = ?`
-      )
-        .bind(nowIso, token)
-        .run();
-
-      // Record Audit
-      await env.DB.prepare(
-        `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
-        VALUES (?, 'CUSTOMER', 'INQUIRY_REVOKED', 'INQUIRY', ?, '{"tombstoned": true}', ?)`
-      )
-        .bind("aud_" + crypto.randomUUID(), inq.id, nowIso)
-        .run();
-
-      return jsonResponse({
-        ok: true,
-        status: "CANCELLED",
-        message: "신청이 정상 취소되었으며 개인정보가 영구 파기(tombstone)되었습니다.",
-      });
+    const inq = await env.DB.prepare("SELECT id FROM inquiries WHERE tracking_token = ?").bind(token).first();
+    if (!inq) {
+      return errorResponse("INQUIRY_NOT_FOUND", "신청 내역을 찾을 수 없습니다.", 404);
     }
 
-    // Demo fallback
+    await env.DB.prepare(
+      `UPDATE inquiries SET
+        status = 'CANCELLED',
+        customer_name_encrypted = 'ERASED_NAME',
+        customer_phone_encrypted = 'ERASED_PHONE',
+        customer_phone_hash = 'ERASED_HASH',
+        updated_at = ?
+      WHERE tracking_token = ?`
+    )
+      .bind(nowIso, token)
+      .run();
+
+    // Record Audit
+    await env.DB.prepare(
+      `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+      VALUES (?, 'CUSTOMER', 'INQUIRY_REVOKED', 'INQUIRY', ?, '{"tombstoned": true}', ?)`
+    )
+      .bind("aud_" + crypto.randomUUID(), inq.id, nowIso)
+      .run();
+
     return jsonResponse({
       ok: true,
       status: "CANCELLED",
-      demo_mode: true,
-      message: "데모 신청 취소 시뮬레이션이 완료되었습니다.",
+      message: "신청이 정상 취소되었으며 개인정보가 영구 파기(tombstone)되었습니다.",
     });
   }
 
   // 5. Partners Apply: POST /partners/apply
   if (path === "/partners/apply" && method === "POST") {
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
+
+    const gateErr = checkOperatorReleaseGate(env);
+    if (gateErr) return gateErr;
+
     try {
       const body = await request.json();
       const name = (body.name || "").trim();
@@ -459,23 +484,21 @@ async function handleApiRequest(request, url, env) {
       const partnerId = "partner_" + crypto.randomUUID();
       const nowIso = new Date().toISOString();
 
-      if (env.DB) {
-        await env.DB.prepare(
-          `INSERT INTO organizations (id, name, business_number, representative_name, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?)`
-        )
-          .bind(orgId, name, bizNum, rep, nowIso, nowIso)
-          .run();
+      await env.DB.prepare(
+        `INSERT INTO organizations (id, name, business_number, representative_name, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)`
+      )
+        .bind(orgId, name, bizNum, rep, nowIso, nowIso)
+        .run();
 
-        await env.DB.prepare(
-          `INSERT INTO partners (
-            id, organization_id, name, partner_type, business_number, representative_name, contact_phone,
-            verification_status, liability_insurance_status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING_APPROVAL', 'PENDING_VERIFICATION', ?, ?)`
-        )
-          .bind(partnerId, orgId, name, partnerType, bizNum, rep, phone, nowIso, nowIso)
-          .run();
-      }
+      await env.DB.prepare(
+        `INSERT INTO partners (
+          id, organization_id, name, partner_type, business_number, representative_name, contact_phone,
+          verification_status, liability_insurance_status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING_APPROVAL', 'PENDING_VERIFICATION', ?, ?)`
+      )
+        .bind(partnerId, orgId, name, partnerType, bizNum, rep, phone, nowIso, nowIso)
+        .run();
 
       return jsonResponse(
         {
@@ -496,6 +519,9 @@ async function handleApiRequest(request, url, env) {
   // 6. Match Fulfillment: POST /matches/:id/fulfill (SBK-FIX-06: Two-Way Verification Gateway)
   const matchFulfill = path.match(/^\/matches\/([a-zA-Z0-9_-]+)\/fulfill$/);
   if (matchFulfill && method === "POST") {
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
+
     try {
       const matchId = matchFulfill[1];
       const body = await request.json();
@@ -513,48 +539,38 @@ async function handleApiRequest(request, url, env) {
         return errorResponse("INVALID_AMOUNT", "최종 정산 금액은 0원보다 커야 합니다.", 400);
       }
 
-      if (env.DB) {
-        const match = await env.DB.prepare("SELECT * FROM matches WHERE id = ? AND partner_id = ?").bind(matchId, partnerId).first();
-        if (!match) {
-          return errorResponse("MATCH_NOT_FOUND", "일치하는 매칭 정보를 찾을 수 없습니다.", 404);
-        }
-        if (match.status === "DISPUTED") {
-          return errorResponse("MATCH_DISPUTED", "분쟁 진행 중인 매칭에 대해서는 완료 보고를 제출할 수 없습니다.", 400);
-        }
-        const inq = await env.DB.prepare("SELECT status FROM inquiries WHERE id = ?").bind(match.inquiry_id).first();
-        if (inq && inq.status === "CANCELLED") {
-          return errorResponse("INQUIRY_CANCELLED", "고객이 철회한 요청 건에 대해서는 시공 완료를 접수할 수 없습니다.", 400);
-        }
-
-        const nowIso = new Date().toISOString();
-        const evidenceId = "evi_" + crypto.randomUUID();
-
-        // Save evidence with PENDING_CUSTOMER_CONFIRMATION
-        await env.DB.prepare(
-          `INSERT INTO fulfillment_evidence (
-            id, match_id, photo_urls, completion_timestamp, partner_submitted_amount, verification_status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, 'PENDING_CUSTOMER_CONFIRMATION', ?, ?)`
-        ).bind(evidenceId, matchId, JSON.stringify(photoUrls), nowIso, finalAmount, nowIso, nowIso).run();
-
-        await env.DB.prepare(
-          "UPDATE matches SET status = 'COMPLETED', final_amount = ?, updated_at = ? WHERE id = ?"
-        ).bind(finalAmount, nowIso, matchId).run();
-
-        return jsonResponse({
-          ok: true,
-          match_id: matchId,
-          status: "COMPLETED",
-          verification_status: "PENDING_CUSTOMER_CONFIRMATION",
-          message: "시공 완료 보고가 접수되었습니다. 고객 최종 확인 또는 분쟁 유예기간 경과 후 정산 청구 자격이 부여됩니다.",
-        });
+      const match = await env.DB.prepare("SELECT * FROM matches WHERE id = ? AND partner_id = ?").bind(matchId, partnerId).first();
+      if (!match) {
+        return errorResponse("MATCH_NOT_FOUND", "일치하는 매칭 정보를 찾을 수 없습니다.", 404);
       }
+      if (match.status === "DISPUTED") {
+        return errorResponse("MATCH_DISPUTED", "분쟁 진행 중인 매칭에 대해서는 완료 보고를 제출할 수 없습니다.", 400);
+      }
+      const inq = await env.DB.prepare("SELECT status FROM inquiries WHERE id = ?").bind(match.inquiry_id).first();
+      if (inq && inq.status === "CANCELLED") {
+        return errorResponse("INQUIRY_CANCELLED", "고객이 철회한 요청 건에 대해서는 시공 완료를 접수할 수 없습니다.", 400);
+      }
+
+      const nowIso = new Date().toISOString();
+      const evidenceId = "evi_" + crypto.randomUUID();
+
+      // Save evidence with PENDING_CUSTOMER_CONFIRMATION
+      await env.DB.prepare(
+        `INSERT INTO fulfillment_evidence (
+          id, match_id, photo_urls, completion_timestamp, partner_submitted_amount, verification_status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'PENDING_CUSTOMER_CONFIRMATION', ?, ?)`
+      ).bind(evidenceId, matchId, JSON.stringify(photoUrls), nowIso, finalAmount, nowIso, nowIso).run();
+
+      await env.DB.prepare(
+        "UPDATE matches SET status = 'COMPLETED', final_amount = ?, updated_at = ? WHERE id = ?"
+      ).bind(finalAmount, nowIso, matchId).run();
 
       return jsonResponse({
         ok: true,
         match_id: matchId,
         status: "COMPLETED",
         verification_status: "PENDING_CUSTOMER_CONFIRMATION",
-        demo_mode: true,
+        message: "시공 완료 보고가 접수되었습니다. 고객 최종 확인 또는 분쟁 유예기간 경과 후 정산 청구 자격이 부여됩니다.",
       });
     } catch (err) {
       return errorResponse("SERVER_ERROR", err.message, 500);
@@ -564,45 +580,38 @@ async function handleApiRequest(request, url, env) {
   // 7. Match Confirmation: POST /matches/:id/confirm (SBK-FIX-06)
   const matchConfirm = path.match(/^\/matches\/([a-zA-Z0-9_-]+)\/confirm$/);
   if (matchConfirm && method === "POST") {
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
+
     try {
       const matchId = matchConfirm[1];
       const body = await request.json();
       const rating = Number(body.rating) || 5;
 
-      if (env.DB) {
-        const match = await env.DB.prepare("SELECT * FROM matches WHERE id = ?").bind(matchId).first();
-        if (!match) {
-          return errorResponse("MATCH_NOT_FOUND", "매칭을 찾을 수 없습니다.", 404);
-        }
-        if (match.status === "DISPUTED") {
-          return errorResponse("MATCH_DISPUTED", "분쟁 진행 중인 건은 완료 확인할 수 없습니다.", 400);
-        }
-
-        const nowIso = new Date().toISOString();
-        await env.DB.prepare(
-          "UPDATE fulfillment_evidence SET verification_status = 'VERIFIED', updated_at = ? WHERE match_id = ?"
-        ).bind(nowIso, matchId).run();
-
-        await env.DB.prepare(
-          "UPDATE matches SET status = 'BILLABLE', updated_at = ? WHERE id = ?"
-        ).bind(nowIso, matchId).run();
-
-        return jsonResponse({
-          ok: true,
-          match_id: matchId,
-          status: "BILLABLE",
-          verification_status: "VERIFIED",
-          rating,
-          message: "고객님의 시공 완료 확인이 완료되었습니다. 정산 대기열로 안전하게 등록되었습니다.",
-        });
+      const match = await env.DB.prepare("SELECT * FROM matches WHERE id = ?").bind(matchId).first();
+      if (!match) {
+        return errorResponse("MATCH_NOT_FOUND", "매칭을 찾을 수 없습니다.", 404);
       }
+      if (match.status === "DISPUTED") {
+        return errorResponse("MATCH_DISPUTED", "분쟁 진행 중인 건은 완료 확인할 수 없습니다.", 400);
+      }
+
+      const nowIso = new Date().toISOString();
+      await env.DB.prepare(
+        "UPDATE fulfillment_evidence SET verification_status = 'VERIFIED', updated_at = ? WHERE match_id = ?"
+      ).bind(nowIso, matchId).run();
+
+      await env.DB.prepare(
+        "UPDATE matches SET status = 'BILLABLE', updated_at = ? WHERE id = ?"
+      ).bind(nowIso, matchId).run();
 
       return jsonResponse({
         ok: true,
         match_id: matchId,
         status: "BILLABLE",
         verification_status: "VERIFIED",
-        demo_mode: true,
+        rating,
+        message: "고객님의 시공 완료 확인이 완료되었습니다. 정산 대기열로 안전하게 등록되었습니다.",
       });
     } catch (err) {
       return errorResponse("SERVER_ERROR", err.message, 500);
@@ -623,19 +632,17 @@ async function handleApiRequest(request, url, env) {
     }
 
     if (path === "/admin/invoices" && method === "GET") {
-      if (env.DB) {
-        const rows = await env.DB.prepare("SELECT * FROM invoices ORDER BY created_at DESC LIMIT 20").all();
-        return jsonResponse({ ok: true, invoices: rows.results || [] });
-      }
-      return jsonResponse({ ok: true, invoices: [], demo_mode: true });
+      const dbErr = checkD1Database(env);
+      if (dbErr) return dbErr;
+      const rows = await env.DB.prepare("SELECT * FROM invoices ORDER BY created_at DESC LIMIT 20").all();
+      return jsonResponse({ ok: true, invoices: rows.results || [] });
     }
 
     if (path === "/admin/payouts" && method === "GET") {
-      if (env.DB) {
-        const rows = await env.DB.prepare("SELECT * FROM payouts ORDER BY created_at DESC LIMIT 20").all();
-        return jsonResponse({ ok: true, payouts: rows.results || [] });
-      }
-      return jsonResponse({ ok: true, payouts: [], demo_mode: true });
+      const dbErr = checkD1Database(env);
+      if (dbErr) return dbErr;
+      const rows = await env.DB.prepare("SELECT * FROM payouts ORDER BY created_at DESC LIMIT 20").all();
+      return jsonResponse({ ok: true, payouts: rows.results || [] });
     }
   }
 
@@ -651,9 +658,9 @@ async function handleApiRequest(request, url, env) {
     if (!adminKey || adminKey !== expectedKey) {
       return errorResponse("UNAUTHORIZED", "크론 작업 실행 권한이 없습니다.", 401);
     }
-    if (!env.DB) {
-      return jsonResponse({ ok: true, processed_count: 0, message: "D1 not bound (mock)" });
-    }
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
+
     const nowIso = new Date().toISOString();
     const expiredOffers = await env.DB.prepare(
       "SELECT id, inquiry_id, slot_id FROM assignment_offers WHERE status = 'PENDING' AND expires_at < ?"
