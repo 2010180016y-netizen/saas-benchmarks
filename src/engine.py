@@ -239,58 +239,83 @@ def submit_fulfillment(
     match_id: str,
     partner_id: str,
     final_amount: int,
-    photo_urls: List[str]
+    photo_urls: List[str],
+    auto_accrue: bool = True
 ) -> Dict[str, Any]:
     """
-    FR-07, FR-08: Fulfillment submission, evidence storage, and immutable ledger event creation.
-    Platform fee: 8% (VAT excl.), Referral share: 35% of platform fee.
+    FR-07, FR-08 & SBK-FIX-06: Verified Fulfillment & Two-Way Completion Gateway.
+    Guardrails:
+    1. Match must exist and partner must match (prevents unassigned fraud).
+    2. Minimum 2 photo URLs required (before & after photos).
+    3. Final amount must be strictly positive (> 0).
+    4. Cancelled inquiry cannot be fulfilled (blocks work after customer revocation).
+    5. Disputed match cannot be fulfilled/accrued (freezes disputed settlement).
     """
     match = db.execute("SELECT * FROM matches WHERE id = ? AND partner_id = ?", (match_id, partner_id)).fetchone()
     if not match:
-        raise EngineError("MATCH_NOT_FOUND", "매칭 정보를 찾을 수 없습니다.", 404)
+        raise EngineError("MATCH_NOT_FOUND", "일치하는 매칭 정보를 찾을 수 없습니다.", 404)
+
+    # Guardrail 2: Photo evidence check (B07)
+    if not photo_urls or len(photo_urls) < 2:
+        raise EngineError("INSUFFICIENT_EVIDENCE", "현장 시공 전후 사진 2장 이상의 증빙이 필수적입니다.", 400)
+
+    # Guardrail 3: Positive amount check
+    if not final_amount or final_amount <= 0:
+        raise EngineError("INVALID_AMOUNT", "최종 정산 금액은 0원보다 커야 합니다.", 400)
+
+    # Guardrail 4: Inquiry cancellation check (B13)
+    inq = db.execute("SELECT * FROM inquiries WHERE id = ?", (match["inquiry_id"],)).fetchone()
+    if inq and inq["status"] == "CANCELLED":
+        raise EngineError("INQUIRY_CANCELLED", "고객이 철회한 요청 건에 대해서는 시공 완료를 접수할 수 없습니다.", 400)
+
+    # Guardrail 5: Dispute status check
+    if match["status"] == "DISPUTED":
+        raise EngineError("MATCH_DISPUTED", "분쟁 진행 중인 매칭에 대해서는 정산 청구를 진행할 수 없습니다.", 400)
 
     now_iso = datetime.now(timezone.utc).isoformat()
     evidence_id = f"evi_{uuid.uuid4()}"
+    ver_status = "VERIFIED" if auto_accrue else "PENDING_CUSTOMER_CONFIRMATION"
 
     # Insert Fulfillment Evidence
     db.execute(
         """
         INSERT INTO fulfillment_evidence (
             id, match_id, photo_urls, completion_timestamp, partner_submitted_amount, verification_status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'VERIFIED', ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (evidence_id, match_id, json.dumps(photo_urls), now_iso, final_amount, now_iso, now_iso)
+        (evidence_id, match_id, json.dumps(photo_urls), now_iso, final_amount, ver_status, now_iso, now_iso)
     )
 
     # Update Match & Slot
-    db.execute("UPDATE matches SET status = 'COMPLETED', final_amount = ?, updated_at = ? WHERE id = ?", (final_amount, now_iso, match_id))
+    target_match_status = "COMPLETED" if not auto_accrue else "VERIFIED"
+    db.execute("UPDATE matches SET status = ?, final_amount = ?, updated_at = ? WHERE id = ?", (target_match_status, final_amount, now_iso, match_id))
     db.execute("UPDATE capacity_slots SET status = 'COMPLETED', updated_at = ? WHERE id = ?", (now_iso, match["slot_id"]))
     db.execute("UPDATE inquiries SET status = 'FULFILLED', updated_at = ? WHERE id = ?", (now_iso, match["inquiry_id"]))
     db.execute("UPDATE partners SET total_completed_count = total_completed_count + 1 WHERE id = ?", (partner_id,))
 
-    # Ledger Accounting
+    # Ledger Accounting (Only accrued if verified!)
     platform_fee = int(final_amount * 0.08) # 8%
     referral_fee = int(platform_fee * 0.35) # 35% of 8%
 
-    # 1. Platform Revenue Event
-    db.execute(
-        """
-        INSERT INTO ledger_events (id, match_id, event_type, amount, debit_account, credit_account, description, created_at)
-        VALUES (?, ?, 'REVENUE_ACCRUED', ?, 'ACCOUNTS_RECEIVABLE_PARTNER', 'PLATFORM_COMMISSION_REVENUE', 'B2B 성과 수수료 8%', ?)
-        """,
-        (f"led_{uuid.uuid4()}", match_id, platform_fee, now_iso)
-    )
-
-    # 2. Referral Payout Allocation (if inquiry has attribution)
-    inq = db.execute("SELECT attribution_partner_id FROM inquiries WHERE id = ?", (match["inquiry_id"],)).fetchone()
-    if inq and inq["attribution_partner_id"]:
+    if auto_accrue:
+        # 1. Platform Revenue Event
         db.execute(
             """
             INSERT INTO ledger_events (id, match_id, event_type, amount, debit_account, credit_account, description, created_at)
-            VALUES (?, ?, 'REFERRAL_ALLOCATED', ?, 'REFERRAL_COMMISSION_EXPENSE', 'ACCOUNTS_PAYABLE_REFERRER', '원 유입업체 리퍼럴 배분 35%', ?)
+            VALUES (?, ?, 'REVENUE_ACCRUED', ?, 'ACCOUNTS_RECEIVABLE_PARTNER', 'PLATFORM_COMMISSION_REVENUE', 'B2B 성과 수수료 8%', ?)
             """,
-            (f"led_{uuid.uuid4()}", match_id, referral_fee, now_iso)
+            (f"led_{uuid.uuid4()}", match_id, platform_fee, now_iso)
         )
+
+        # 2. Referral Payout Allocation (if inquiry has attribution)
+        if inq and inq["attribution_partner_id"]:
+            db.execute(
+                """
+                INSERT INTO ledger_events (id, match_id, event_type, amount, debit_account, credit_account, description, created_at)
+                VALUES (?, ?, 'REFERRAL_ALLOCATED', ?, 'REFERRAL_COMMISSION_EXPENSE', 'ACCOUNTS_PAYABLE_REFERRER', '원 유입업체 리퍼럴 배분 35%', ?)
+                """,
+                (f"led_{uuid.uuid4()}", match_id, referral_fee, now_iso)
+            )
 
     db.commit()
 
@@ -299,7 +324,133 @@ def submit_fulfillment(
         "final_amount": final_amount,
         "platform_fee": platform_fee,
         "referral_fee": referral_fee,
-        "status": "FULFILLED"
+        "status": "FULFILLED" if auto_accrue else "COMPLETED",
+        "verification_status": ver_status
+    }
+
+def confirm_customer_completion(
+    db: DatabaseManager,
+    match_id: str,
+    customer_rating: int = 5,
+    customer_notes: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    SBK-FIX-06: Customer explicitly confirms completed work.
+    Transitions match to BILLABLE and writes immutable ledger events.
+    """
+    match = db.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
+    if not match:
+        raise EngineError("MATCH_NOT_FOUND", "매칭을 찾을 수 없습니다.", 404)
+    if match["status"] == "DISPUTED":
+        raise EngineError("MATCH_DISPUTED", "분쟁 진행 중인 건은 완료 확인할 수 없습니다.", 400)
+    if match["status"] not in ("COMPLETED", "VERIFIED"):
+        raise EngineError("INVALID_MATCH_STATUS", f"완료 확인 대기 상태(COMPLETED)가 아닙니다 (현재: {match['status']}).", 400)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Update evidence to VERIFIED
+    db.execute(
+        "UPDATE fulfillment_evidence SET verification_status = 'VERIFIED', updated_at = ? WHERE match_id = ?",
+        (now_iso, match_id)
+    )
+
+    # Transition match to BILLABLE
+    db.execute("UPDATE matches SET status = 'BILLABLE', updated_at = ? WHERE id = ?", (now_iso, match_id))
+
+    final_amount = match["final_amount"] or 250000
+    platform_fee = int(final_amount * 0.08)
+    referral_fee = int(platform_fee * 0.35)
+
+    # Check if ledger already exists
+    existing_ledger = db.execute("SELECT id FROM ledger_events WHERE match_id = ? AND event_type = 'REVENUE_ACCRUED'", (match_id,)).fetchone()
+    if not existing_ledger:
+        db.execute(
+            """
+            INSERT INTO ledger_events (id, match_id, event_type, amount, debit_account, credit_account, description, created_at)
+            VALUES (?, ?, 'REVENUE_ACCRUED', ?, 'ACCOUNTS_RECEIVABLE_PARTNER', 'PLATFORM_COMMISSION_REVENUE', 'B2B 성과 수수료 8%', ?)
+            """,
+            (f"led_{uuid.uuid4()}", match_id, platform_fee, now_iso)
+        )
+        inq = db.execute("SELECT attribution_partner_id FROM inquiries WHERE id = ?", (match["inquiry_id"],)).fetchone()
+        if inq and inq["attribution_partner_id"]:
+            db.execute(
+                """
+                INSERT INTO ledger_events (id, match_id, event_type, amount, debit_account, credit_account, description, created_at)
+                VALUES (?, ?, 'REFERRAL_ALLOCATED', ?, 'REFERRAL_COMMISSION_EXPENSE', 'ACCOUNTS_PAYABLE_REFERRER', '원 유입업체 리퍼럴 배분 35%', ?)
+                """,
+                (f"led_{uuid.uuid4()}", match_id, referral_fee, now_iso)
+            )
+
+    # Audit log
+    db.execute(
+        """
+        INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+        VALUES (?, 'CUSTOMER', 'COMPLETION_CONFIRMED', 'MATCH', ?, ?, ?)
+        """,
+        (f"aud_{uuid.uuid4()}", match_id, json.dumps({"rating": customer_rating, "notes": customer_notes}), now_iso)
+    )
+    db.commit()
+
+    return {
+        "match_id": match_id,
+        "status": "BILLABLE",
+        "verification_status": "VERIFIED",
+        "platform_fee": platform_fee,
+        "referral_fee": referral_fee
+    }
+
+def admin_override_completion(
+    db: DatabaseManager,
+    match_id: str,
+    admin_id: str,
+    reason: str
+) -> Dict[str, Any]:
+    """
+    SBK-FIX-06: Admin exception override for completion verification.
+    Mandatory audit reason required.
+    """
+    if not reason or len(reason.strip()) < 5:
+        raise EngineError("REASON_REQUIRED", "관리자 예외 승인 시 명확한 승인 근거 사유(5자 이상)가 필수입니다.", 400)
+
+    match = db.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
+    if not match:
+        raise EngineError("MATCH_NOT_FOUND", "매칭을 찾을 수 없습니다.", 404)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    db.execute(
+        "UPDATE fulfillment_evidence SET verification_status = 'VERIFIED', updated_at = ? WHERE match_id = ?",
+        (now_iso, match_id)
+    )
+    db.execute("UPDATE matches SET status = 'BILLABLE', updated_at = ? WHERE id = ?", (now_iso, match_id))
+
+    final_amount = match["final_amount"] or 250000
+    platform_fee = int(final_amount * 0.08)
+    referral_fee = int(platform_fee * 0.35)
+
+    existing_ledger = db.execute("SELECT id FROM ledger_events WHERE match_id = ? AND event_type = 'REVENUE_ACCRUED'", (match_id,)).fetchone()
+    if not existing_ledger:
+        db.execute(
+            """
+            INSERT INTO ledger_events (id, match_id, event_type, amount, debit_account, credit_account, description, created_at)
+            VALUES (?, ?, 'REVENUE_ACCRUED', ?, 'ACCOUNTS_RECEIVABLE_PARTNER', 'PLATFORM_COMMISSION_REVENUE', 'B2B 성과 수수료 8%', ?)
+            """,
+            (f"led_{uuid.uuid4()}", match_id, platform_fee, now_iso)
+        )
+
+    db.execute(
+        """
+        INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+        VALUES (?, ?, 'ADMIN_OVERRIDE_COMPLETION', 'MATCH', ?, ?, ?)
+        """,
+        (f"aud_{uuid.uuid4()}", admin_id, match_id, json.dumps({"reason": reason}, ensure_ascii=False), now_iso)
+    )
+    db.commit()
+
+    return {
+        "match_id": match_id,
+        "status": "BILLABLE",
+        "verification_status": "VERIFIED",
+        "override_reason": reason
     }
 
 def revoke_inquiry(db: DatabaseManager, tracking_token: str) -> Dict[str, Any]:

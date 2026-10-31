@@ -409,6 +409,122 @@ async function handleApiRequest(request, url, env) {
     }
   }
 
+  // 6. Match Fulfillment: POST /matches/:id/fulfill (SBK-FIX-06: Two-Way Verification Gateway)
+  const matchFulfill = path.match(/^\/matches\/([a-zA-Z0-9_-]+)\/fulfill$/);
+  if (matchFulfill && method === "POST") {
+    try {
+      const matchId = matchFulfill[1];
+      const body = await request.json();
+      const partnerId = body.partner_id;
+      const finalAmount = Number(body.final_amount) || 0;
+      const photoUrls = body.photo_urls || [];
+
+      if (!partnerId) {
+        return errorResponse("PARTNER_ID_REQUIRED", "파트너 ID가 필요합니다.", 400);
+      }
+      if (!photoUrls || photoUrls.length < 2) {
+        return errorResponse("INSUFFICIENT_EVIDENCE", "현장 시공 전후 사진 2장 이상의 증빙이 필수적입니다.", 400);
+      }
+      if (finalAmount <= 0) {
+        return errorResponse("INVALID_AMOUNT", "최종 정산 금액은 0원보다 커야 합니다.", 400);
+      }
+
+      if (env.DB) {
+        const match = await env.DB.prepare("SELECT * FROM matches WHERE id = ? AND partner_id = ?").bind(matchId, partnerId).first();
+        if (!match) {
+          return errorResponse("MATCH_NOT_FOUND", "일치하는 매칭 정보를 찾을 수 없습니다.", 404);
+        }
+        if (match.status === "DISPUTED") {
+          return errorResponse("MATCH_DISPUTED", "분쟁 진행 중인 매칭에 대해서는 완료 보고를 제출할 수 없습니다.", 400);
+        }
+        const inq = await env.DB.prepare("SELECT status FROM inquiries WHERE id = ?").bind(match.inquiry_id).first();
+        if (inq && inq.status === "CANCELLED") {
+          return errorResponse("INQUIRY_CANCELLED", "고객이 철회한 요청 건에 대해서는 시공 완료를 접수할 수 없습니다.", 400);
+        }
+
+        const nowIso = new Date().toISOString();
+        const evidenceId = "evi_" + crypto.randomUUID();
+
+        // Save evidence with PENDING_CUSTOMER_CONFIRMATION
+        await env.DB.prepare(
+          `INSERT INTO fulfillment_evidence (
+            id, match_id, photo_urls, completion_timestamp, partner_submitted_amount, verification_status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, 'PENDING_CUSTOMER_CONFIRMATION', ?, ?)`
+        ).bind(evidenceId, matchId, JSON.stringify(photoUrls), nowIso, finalAmount, nowIso, nowIso).run();
+
+        await env.DB.prepare(
+          "UPDATE matches SET status = 'COMPLETED', final_amount = ?, updated_at = ? WHERE id = ?"
+        ).bind(finalAmount, nowIso, matchId).run();
+
+        return jsonResponse({
+          ok: true,
+          match_id: matchId,
+          status: "COMPLETED",
+          verification_status: "PENDING_CUSTOMER_CONFIRMATION",
+          message: "시공 완료 보고가 접수되었습니다. 고객 최종 확인 또는 분쟁 유예기간 경과 후 정산 청구 자격이 부여됩니다.",
+        });
+      }
+
+      return jsonResponse({
+        ok: true,
+        match_id: matchId,
+        status: "COMPLETED",
+        verification_status: "PENDING_CUSTOMER_CONFIRMATION",
+        demo_mode: true,
+      });
+    } catch (err) {
+      return errorResponse("SERVER_ERROR", err.message, 500);
+    }
+  }
+
+  // 7. Match Confirmation: POST /matches/:id/confirm (SBK-FIX-06)
+  const matchConfirm = path.match(/^\/matches\/([a-zA-Z0-9_-]+)\/confirm$/);
+  if (matchConfirm && method === "POST") {
+    try {
+      const matchId = matchConfirm[1];
+      const body = await request.json();
+      const rating = Number(body.rating) || 5;
+
+      if (env.DB) {
+        const match = await env.DB.prepare("SELECT * FROM matches WHERE id = ?").bind(matchId).first();
+        if (!match) {
+          return errorResponse("MATCH_NOT_FOUND", "매칭을 찾을 수 없습니다.", 404);
+        }
+        if (match.status === "DISPUTED") {
+          return errorResponse("MATCH_DISPUTED", "분쟁 진행 중인 건은 완료 확인할 수 없습니다.", 400);
+        }
+
+        const nowIso = new Date().toISOString();
+        await env.DB.prepare(
+          "UPDATE fulfillment_evidence SET verification_status = 'VERIFIED', updated_at = ? WHERE match_id = ?"
+        ).bind(nowIso, matchId).run();
+
+        await env.DB.prepare(
+          "UPDATE matches SET status = 'BILLABLE', updated_at = ? WHERE id = ?"
+        ).bind(nowIso, matchId).run();
+
+        return jsonResponse({
+          ok: true,
+          match_id: matchId,
+          status: "BILLABLE",
+          verification_status: "VERIFIED",
+          rating,
+          message: "고객님의 시공 완료 확인이 완료되었습니다. 정산 대기열로 안전하게 등록되었습니다.",
+        });
+      }
+
+      return jsonResponse({
+        ok: true,
+        match_id: matchId,
+        status: "BILLABLE",
+        verification_status: "VERIFIED",
+        demo_mode: true,
+      });
+    } catch (err) {
+      return errorResponse("SERVER_ERROR", err.message, 500);
+    }
+  }
+
   // 6. Admin Endpoints (Strictly Protected by X-SBK-Admin-Key)
   if (path.startsWith("/admin/")) {
     const adminKey = request.headers.get("X-SBK-Admin-Key");
