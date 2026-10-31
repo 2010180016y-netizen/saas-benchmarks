@@ -346,6 +346,17 @@ def confirm_customer_completion(
     if match["status"] not in ("COMPLETED", "VERIFIED"):
         raise EngineError("INVALID_MATCH_STATUS", f"완료 확인 대기 상태(COMPLETED)가 아닙니다 (현재: {match['status']}).", 400)
 
+    # SBK-MINI-10: Evidence validation before BILLABLE transition
+    evidence = db.execute(
+        "SELECT * FROM fulfillment_evidence WHERE match_id = ?",
+        (match_id,)
+    ).fetchone()
+    if not evidence:
+        raise EngineError("EVIDENCE_NOT_FOUND", "시공 증빙 자료가 등록되지 않았습니다.", 400)
+    photos = json.loads(evidence["photo_urls"]) if evidence["photo_urls"] else []
+    if not isinstance(photos, list) or len(photos) < 2:
+        raise EngineError("INSUFFICIENT_EVIDENCE", "유효한 시공 사진 증빙(2장 이상)이 없습니다.", 400)
+
     now_iso = datetime.now(timezone.utc).isoformat()
 
     # Update evidence to VERIFIED

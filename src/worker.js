@@ -1216,7 +1216,7 @@ async function handleApiRequest(request, url, env) {
     }, 200);
   }
 
-  // 6. Match Fulfillment: POST /matches/:id/fulfill (SBK-FIX-06: Two-Way Verification Gateway)
+  // 6. Match Fulfillment: POST /matches/:id/fulfill (SBK-FIX-06 & SBK-MINI-10: Strict Partner Authentication & Evidence Validation)
   const matchFulfill = path.match(/^\/matches\/([a-zA-Z0-9_-]+)\/fulfill$/);
   if (matchFulfill && method === "POST") {
     const dbErr = checkD1Database(env);
@@ -1224,28 +1224,50 @@ async function handleApiRequest(request, url, env) {
 
     try {
       const matchId = matchFulfill[1];
-      const body = await request.json();
+      const body = await request.json().catch(() => ({}));
       const partnerId = body.partner_id;
+      const partnerKey = request.headers.get("X-SBK-Partner-Key") || (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
       const finalAmount = Number(body.final_amount) || 0;
-      const photoUrls = body.photo_urls || [];
+      const photoUrls = body.photo_urls;
 
       if (!partnerId) {
         return errorResponse("PARTNER_ID_REQUIRED", "파트너 ID가 필요합니다.", 400);
       }
-      if (!photoUrls || photoUrls.length < 2) {
-        return errorResponse("INSUFFICIENT_EVIDENCE", "현장 시공 전후 사진 2장 이상의 증빙이 필수적입니다.", 400);
+
+      // SBK-MINI-10: Strictly authenticate partner via secret key or admin override
+      const partner = await env.DB.prepare(
+        "SELECT id, business_number, verification_status FROM partners WHERE id = ?"
+      ).bind(partnerId).first();
+
+      if (!partner || partner.verification_status !== "APPROVED") {
+        return errorResponse("UNAPPROVED_PARTNER", "승인된 파트너만 시공 완료를 접수할 수 있습니다.", 403);
+      }
+      if (!partnerKey || (partnerKey !== partner.business_number && partnerKey !== env.SBK_ADMIN_KEY)) {
+        return errorResponse("UNAUTHORIZED", "파트너 인증 키(X-SBK-Partner-Key)가 유효하지 않습니다.", 401);
+      }
+
+      // SBK-MINI-10: Evidence validation (minimum 2 valid non-empty photo strings)
+      if (!photoUrls || !Array.isArray(photoUrls) || photoUrls.length < 2 || photoUrls.some((p) => typeof p !== "string" || p.trim().length === 0)) {
+        return errorResponse("INSUFFICIENT_EVIDENCE", "현장 시공 전후 사진 2장 이상의 유효한 증빙이 필수적입니다.", 400);
       }
       if (finalAmount <= 0) {
         return errorResponse("INVALID_AMOUNT", "최종 정산 금액은 0원보다 커야 합니다.", 400);
       }
 
-      const match = await env.DB.prepare("SELECT * FROM matches WHERE id = ? AND partner_id = ?").bind(matchId, partnerId).first();
+      const match = await env.DB.prepare("SELECT * FROM matches WHERE id = ?").bind(matchId).first();
       if (!match) {
         return errorResponse("MATCH_NOT_FOUND", "일치하는 매칭 정보를 찾을 수 없습니다.", 404);
+      }
+      if (match.partner_id !== partnerId) {
+        return errorResponse("FORBIDDEN", "배정된 파트너만 해당 매칭의 완료 보고를 제출할 수 있습니다.", 403);
+      }
+      if (match.status === "COMPLETED" || match.status === "BILLABLE") {
+        return errorResponse("ALREADY_FULFILLED", "이미 완료 보고가 접수된 매칭입니다.", 409);
       }
       if (match.status === "DISPUTED") {
         return errorResponse("MATCH_DISPUTED", "분쟁 진행 중인 매칭에 대해서는 완료 보고를 제출할 수 없습니다.", 400);
       }
+
       const inq = await env.DB.prepare("SELECT status FROM inquiries WHERE id = ?").bind(match.inquiry_id).first();
       if (inq && inq.status === "CANCELLED") {
         return errorResponse("INQUIRY_CANCELLED", "고객이 철회한 요청 건에 대해서는 시공 완료를 접수할 수 없습니다.", 400);
@@ -1277,7 +1299,7 @@ async function handleApiRequest(request, url, env) {
     }
   }
 
-  // 7. Match Confirmation: POST /matches/:id/confirm (SBK-FIX-06)
+  // 7. Match Confirmation: POST /matches/:id/confirm (SBK-FIX-06 & SBK-MINI-10: Customer Token Auth & Evidence Gate)
   const matchConfirm = path.match(/^\/matches\/([a-zA-Z0-9_-]+)\/confirm$/);
   if (matchConfirm && method === "POST") {
     const dbErr = checkD1Database(env);
@@ -1285,15 +1307,56 @@ async function handleApiRequest(request, url, env) {
 
     try {
       const matchId = matchConfirm[1];
-      const body = await request.json();
+      const body = await request.json().catch(() => ({}));
       const rating = Number(body.rating) || 5;
 
-      const match = await env.DB.prepare("SELECT * FROM matches WHERE id = ?").bind(matchId).first();
-      if (!match) {
+      const customerToken = request.headers.get("X-SBK-Customer-Token") || body.tracking_token || url.searchParams.get("token");
+      const adminKey = request.headers.get("X-SBK-Admin-Key");
+      const isAdmin = adminKey && env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
+
+      const matchWithInq = await env.DB.prepare(
+        `SELECT m.*, i.tracking_token, i.status AS inq_status, i.attribution_partner_id
+         FROM matches m
+         JOIN inquiries i ON m.inquiry_id = i.id
+         WHERE m.id = ?`
+      ).bind(matchId).first();
+
+      if (!matchWithInq) {
         return errorResponse("MATCH_NOT_FOUND", "매칭을 찾을 수 없습니다.", 404);
       }
-      if (match.status === "DISPUTED") {
+
+      // SBK-MINI-10: Customer must supply their valid tracking token (or admin override)
+      if (!isAdmin && (!customerToken || customerToken !== matchWithInq.tracking_token)) {
+        return errorResponse("UNAUTHORIZED", "고객 조회 토큰(X-SBK-Customer-Token) 또는 관리자 권한이 필요합니다.", 401);
+      }
+
+      if (matchWithInq.status === "DISPUTED") {
         return errorResponse("MATCH_DISPUTED", "분쟁 진행 중인 건은 완료 확인할 수 없습니다.", 400);
+      }
+      if (matchWithInq.status === "BILLABLE") {
+        return errorResponse("ALREADY_CONFIRMED", "이미 고객 확인 및 정산 완료된 매칭입니다.", 409);
+      }
+      if (matchWithInq.status !== "COMPLETED") {
+        return errorResponse("INVALID_MATCH_STATUS", "시공 완료 보고(COMPLETED)가 접수되지 않은 매칭은 승인할 수 없습니다.", 400);
+      }
+
+      // SBK-MINI-10: Validate that valid fulfillment evidence with 2+ photos exists before BILLABLE transition
+      const evidence = await env.DB.prepare(
+        "SELECT * FROM fulfillment_evidence WHERE match_id = ? ORDER BY created_at DESC LIMIT 1"
+      ).bind(matchId).first();
+
+      if (!evidence) {
+        return errorResponse("EVIDENCE_NOT_FOUND", "시공 증빙 자료가 등록되지 않았습니다.", 400);
+      }
+
+      let photos = [];
+      try {
+        photos = JSON.parse(evidence.photo_urls);
+      } catch (e) {
+        photos = [];
+      }
+      if (!Array.isArray(photos) || photos.length < 2) {
+        return errorResponse("INSUFFICIENT_EVIDENCE", "유효한 시공 사진 증빙(2장 이상)이 없어 BILLABLE로 전이할 수 없습니다.", 400);
       }
 
       const nowIso = new Date().toISOString();
@@ -1304,6 +1367,40 @@ async function handleApiRequest(request, url, env) {
       await env.DB.prepare(
         "UPDATE matches SET status = 'BILLABLE', updated_at = ? WHERE id = ?"
       ).bind(nowIso, matchId).run();
+
+      // Idempotent Ledger Event insertion
+      const finalAmount = matchWithInq.final_amount || 250000;
+      const platformFee = Math.floor(finalAmount * 0.08); // 8%
+      const referralFee = Math.floor(platformFee * 0.35); // 35% of 8%
+
+      const existingLedger = await env.DB.prepare(
+        "SELECT id FROM ledger_events WHERE match_id = ? AND event_type = 'REVENUE_ACCRUED'"
+      ).bind(matchId).first();
+
+      if (!existingLedger) {
+        await env.DB.prepare(
+          `INSERT INTO ledger_events (id, match_id, event_type, amount, debit_account, credit_account, description, created_at)
+           VALUES (?, ?, 'REVENUE_ACCRUED', ?, 'ACCOUNTS_RECEIVABLE_PARTNER', 'PLATFORM_COMMISSION_REVENUE', 'B2B 성과 수수료 8%', ?)`
+        ).bind("led_" + crypto.randomUUID(), matchId, platformFee, nowIso).run();
+
+        if (matchWithInq.attribution_partner_id) {
+          await env.DB.prepare(
+            `INSERT INTO ledger_events (id, match_id, event_type, amount, debit_account, credit_account, description, created_at)
+             VALUES (?, ?, 'REFERRAL_ALLOCATED', ?, 'REFERRAL_COMMISSION_EXPENSE', 'ACCOUNTS_PAYABLE_REFERRER', '원 유입업체 리퍼럴 배분 35%', ?)`
+          ).bind("led_" + crypto.randomUUID(), matchId, referralFee, nowIso).run();
+        }
+      }
+
+      // Audit Log
+      await env.DB.prepare(
+        `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+         VALUES (?, 'CUSTOMER', 'COMPLETION_CONFIRMED', 'MATCH', ?, ?, ?)`
+      ).bind(
+        "aud_" + crypto.randomUUID(),
+        matchId,
+        JSON.stringify({ rating, notes: body.notes || null }),
+        nowIso
+      ).run();
 
       return jsonResponse({
         ok: true,
