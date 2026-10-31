@@ -1,0 +1,41 @@
+Category,Metric_Name,Baseline_Assumption,Pessimistic_Case,Optimistic_Case,Unit,Verification_Status,Source_or_Logic
+Market_Transaction,Average_Order_Value_GMV,250000,180000,350000,KRW,VERIFIED_FACT,Soomgo 2026 public average quote 250k KRW (Studio: 180k; Apt: 350k)
+Revenue_Model,Platform_Gross_Commission_Rate,8.0,6.0,10.0,%,MODEL_ASSUMPTION,Standard Korean B2B performance match take rate assumption
+Revenue_Model,Referral_Partner_Split_Rate,35.0,30.0,40.0,%,MODEL_ASSUMPTION,Incentive to source overflow leads without customer churn
+Revenue_Model,Gross_Commission_Per_Order,20000,10800,35000,KRW,MODEL_ASSUMPTION,GMV * Gross_Commission_Rate
+Revenue_Model,Referral_Partner_Payout_Per_Order,7000,3240,14000,KRW,MODEL_ASSUMPTION,Gross_Commission * Referral_Partner_Split_Rate
+Revenue_Model,Platform_Net_Revenue_Per_Order,13000,7560,21000,KRW,MODEL_ASSUMPTION,Gross_Commission * (1 - Referral_Partner_Split_Rate)
+Revenue_Model,Platform_Net_Take_Rate,5.2,4.2,6.0,%,MODEL_ASSUMPTION,Platform_Net_Revenue / GMV
+Supply_Side,Fulfillment_Partner_Labor_Cost_Ratio,65.0,72.0,55.0,%,HYPOTHESIS,Two-person team daily wage allocation per unit
+Supply_Side,Fulfillment_Partner_Materials_Fuel_Cost,15000,20000,10000,KRW,HYPOTHESIS,Eco-detergents steam equipment fuel costs
+Supply_Side,Fulfillment_Partner_Net_Margin_Ratio,27.0,16.9,37.1,%,MODEL_ASSUMPTION,(GMV - Labor - Materials - Commission) / GMV
+Transaction_Cost,SMS_Kakao_Alimtalk_Cost_Per_Order,250,450,120,KRW,VERIFIED_FACT,Domestic messaging rate (Kakao Alimtalk 8-15 KRW + LMS 35 KRW)
+Transaction_Cost,Payment_Settlement_Fee_Ratio,1.5,2.5,0.0,%,MODEL_ASSUMPTION,Direct bank transfer 0% vs Escrow PG settlement 2.5%
+Transaction_Cost,Dispute_Refund_Reserve_Ratio,3.0,6.0,1.0,%,MODEL_ASSUMPTION,Reserve fund for damage/cleaning defect compensations
+Transaction_Cost,Hosting_Compute_Cost_Per_Order,5,15,1,KRW,VERIFIED_FACT,Cloudflare Workers & D1 free tier baseline ($0.00 within quota)
+Transaction_Cost,Total_Direct_COGS_Per_Order,975,1650,470,KRW,MODEL_ASSUMPTION,Messaging + Hosting + Payment/Reserve allocations
+Funnel_Conversion,Inquiry_Qualification_Rate,80.0,65.0,90.0,%,HYPOTHESIS,Valid service area and valid 24-72h date requests
+Funnel_Conversion,Partner_Acceptance_Rate,75.0,50.0,85.0,%,HYPOTHESIS,Available partner claiming the dispatched emergency slot
+Funnel_Conversion,Customer_Booking_Confirmation_Rate,60.0,45.0,75.0,%,HYPOTHESIS,Customer agreeing to matched partner quote and arrival
+Funnel_Conversion,Fulfillment_Completion_Rate,85.0,70.0,95.0,%,HYPOTHESIS,Final inspection passed without same-day cancellation
+Funnel_Conversion,End_to_End_Completion_Funnel,30.6,10.2,54.5,%,MODEL_ASSUMPTION,Qualification * Acceptance * Confirmation * Completion
+Risk_Factor,Capacity_Rejection_Rate,30.0,45.0,15.0,%,HYPOTHESIS,Peak season and month-end provider overflow rejection rate
+Risk_Factor,Duplicate_Inquiry_Rate,8.0,15.0,3.0,%,HYPOTHESIS,Customers submitting across multiple partner channels
+Risk_Factor,No_Show_or_Same_Day_Cancel_Rate,10.0,18.0,4.0,%,HYPOTHESIS,Customer cancelling after matching before site arrival
+Acquisition_Economics,Customer_Acquisition_Cost_CAC,0,0,0,KRW,VERIFIED_FACT,Path A/B zero-capital organic and partner widget strategy
+Acquisition_Economics,Partner_Acquisition_Cost_PAC,15000,30000,5000,KRW,HYPOTHESIS,Cold phone/visit onboarding time allocation (zero ad spend)
+Acquisition_Economics,Partner_Breakeven_Orders,2.1,4.0,0.8,orders,MODEL_ASSUMPTION,PAC / Platform_Net_Revenue_Per_Order
+Accounting,Revenue_Recognition_Event,Inspection_Completed,Inspection_Completed,Inspection_Completed,event,VERIFIED_FACT,Recognize when customer signs off or 24h passes without claim
+Scenario_A_1M_KRW,Target_Platform_Net_Revenue,1000000,1000000,1000000,KRW,TARGET,Monthly target Scenario A (1M KRW Net Revenue)
+Scenario_A_1M_KRW,Required_Completed_Orders,77,133,48,orders,MODEL_ASSUMPTION,Target_Net_Revenue / Platform_Net_Revenue_Per_Order
+Scenario_A_1M_KRW,Required_Valid_Inquiries,252,1304,88,inquiries,MODEL_ASSUMPTION,Required_Orders / End_to_End_Completion_Funnel
+Scenario_A_1M_KRW,Required_Active_Suppliers,8,14,5,teams,MODEL_ASSUMPTION,Assuming 10 completed orders per supplier per month
+Scenario_B_5M_KRW,Target_Platform_Net_Revenue,5000000,5000000,5000000,KRW,TARGET,Monthly target Scenario B (5M KRW Net Revenue)
+Scenario_B_5M_KRW,Required_Completed_Orders,385,662,239,orders,MODEL_ASSUMPTION,Target_Net_Revenue / Platform_Net_Revenue_Per_Order
+Scenario_B_5M_KRW,Required_Valid_Inquiries,1258,6491,439,inquiries,MODEL_ASSUMPTION,Required_Orders / End_to_End_Completion_Funnel
+Scenario_B_5M_KRW,Required_Active_Suppliers,39,67,24,teams,MODEL_ASSUMPTION,Assuming 10 completed orders per supplier per month
+Scenario_C_10M_KRW,Target_Platform_Net_Revenue,10000000,10000000,10000000,KRW,TARGET,Monthly target Scenario C (10M KRW Net Revenue)
+Scenario_C_10M_KRW,Required_Completed_Orders,770,1323,477,orders,MODEL_ASSUMPTION,Target_Net_Revenue / Platform_Net_Revenue_Per_Order
+Scenario_C_10M_KRW,Required_Valid_Inquiries,2516,12971,876,inquiries,MODEL_ASSUMPTION,Required_Orders / End_to_End_Completion_Funnel
+Scenario_C_10M_KRW,Required_Active_Suppliers,77,133,48,teams,MODEL_ASSUMPTION,Assuming 10 completed orders per supplier per month
+Plausibility_Rule,Validation_Standard,30_Orders_30_Days,30_Orders_30_Days,30_Orders_30_Days,rule,VERIFIED_FACT,Must achieve 30 organic fulfilled orders in Gwanak before scale

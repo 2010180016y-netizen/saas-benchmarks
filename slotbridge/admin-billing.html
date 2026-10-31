@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SlotBridge Korea — 관리자 정산 및 청구 관제 콘솔</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --border: #1f2937;
+      --text: #f9fafb;
+      --muted: #9ca3af;
+      --primary: #3b82f6;
+      --accent: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 24px;
+    }
+    .wrapper { max-width: 960px; margin: 0 auto; }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    h1 { font-size: 22px; font-weight: 700; }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    .kpi-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .kpi-title { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }
+    .kpi-val { font-size: 20px; font-weight: 700; color: #fff; }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+    h2 { font-size: 16px; font-weight: 700; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+    th { padding: 10px 12px; border-bottom: 1px solid #374151; color: var(--muted); font-weight: 600; }
+    td { padding: 12px; border-bottom: 1px solid #1f2937; }
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 4px;
+    }
+    .badge-draft { background: rgba(245, 158, 11, 0.15); color: #fde68a; }
+    .badge-issued { background: rgba(59, 130, 246, 0.15); color: #93c5fd; }
+    .badge-paid { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; }
+    .btn-action {
+      background: var(--primary);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 12px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .btn-action:hover { opacity: 0.9; }
+    .notice-human-gate {
+      background: rgba(59, 130, 246, 0.08);
+      border: 1px solid rgba(59, 130, 246, 0.2);
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 12px;
+      color: #bfdbfe;
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <header>
+      <div>
+        <h1>SlotBridge Korea — 재무·청구·정산 관제</h1>
+        <p style="font-size:12px; color:var(--muted); margin-top:2px;">기준월: 2026년 11월 · 복식부기 불변 원장 연동</p>
+      </div>
+      <span style="font-size:12px; background:#1e293b; color:#94a3b8; padding:4px 10px; border-radius:6px;">관리자 모드</span>
+    </header>
+
+    <div class="notice-human-gate">
+      🔒 <strong>FinOps 운영 원칙:</strong> 예상 수익은 결코 원장에 계상되지 않으며, 고객 대금 수취는 청소업체와 현장 직결제됩니다. 관리자가 세금계산서를 수취 확인하기 전까지 자동 송금은 엄격히 차단됩니다.
+    </div>
+
+    <!-- 4대 독립 재무 KPI -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-title">1. 예상 수익 (미확정)</div>
+        <div class="kpi-val" style="color:#94a3b8;">140,000원</div>
+        <small style="font-size:10px; color:#64748b;">인입 7건 진행 중</small>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">2. 검증 완료 청구 대상</div>
+        <div class="kpi-val" style="color:#60a5fa;">280,000원</div>
+        <small style="font-size:10px; color:#64748b;">시공 검수 14건 완료</small>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">3. 공식 청구액 (발행)</div>
+        <div class="kpi-val" style="color:#f59e0b;">240,000원</div>
+        <small style="font-size:10px; color:#64748b;">인보이스 12건 발행</small>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">4. 실제 입금 정산액</div>
+        <div class="kpi-val" style="color:#10b981;">180,000원</div>
+        <small style="font-size:10px; color:#64748b;">은행 입금 9건 대사 완료</small>
+      </div>
+    </div>
+
+    <!-- 파트너 청구서 관리 -->
+    <div class="card">
+      <h2>
+        <span>📑 B2B 성과 수수료 청구서 (8% + VAT)</span>
+        <button class="btn-action" onclick="alert('2026-11월 청구서 초안(DRAFT) 일괄 생성이 완료되었습니다.')">+ 청구서 초안 생성</button>
+      </h2>
+      <table>
+        <thead>
+          <tr>
+            <th>인보이스 ID</th>
+            <th>시공 파트너명</th>
+            <th>총 작업 거래액</th>
+            <th>플랫폼 수수료(8%)</th>
+            <th>VAT(10%)</th>
+            <th>합계 청구액</th>
+            <th>상태</th>
+            <th>관리 액션</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>INV-202611-01</code></td>
+            <td><strong>클린홈 관악본점</strong></td>
+            <td>1,500,000원 (6건)</td>
+            <td>120,000원</td>
+            <td>12,000원</td>
+            <td><strong>132,000원</strong></td>
+            <td><span class="badge badge-draft">DRAFT</span></td>
+            <td><button class="btn-action" onclick="alert('전자세금계산서 연동 및 청구서가 발행(ISSUED)되었습니다.')">발행 승인</button></td>
+          </tr>
+          <tr>
+            <td><code>INV-202611-02</code></td>
+            <td><strong>탑클린 동작점</strong></td>
+            <td>1,250,000원 (5건)</td>
+            <td>100,000원</td>
+            <td>10,000원</td>
+            <td><strong>110,000원</strong></td>
+            <td><span class="badge badge-issued">ISSUED</span></td>
+            <td><button class="btn-action" style="background:#10b981;" onclick="alert('입금 확인 처리되었습니다.')">입금 완료</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 리퍼럴 지급 관리 대기열 -->
+    <div class="card">
+      <h2>
+        <span>💸 원 유입업체 리퍼럴 지급 대기열 (35% 배분)</span>
+        <small style="font-size:12px; color:var(--muted);">익월 15일 입금 원칙</small>
+      </h2>
+      <table>
+        <thead>
+          <tr>
+            <th>지급 ID</th>
+            <th>리퍼럴 파트너명</th>
+            <th>지급액 (35%)</th>
+            <th>VAT(10%)</th>
+            <th>지급 계좌</th>
+            <th>세금계산서 수취</th>
+            <th>상태</th>
+            <th>송금 승인</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>PAY-202611-01</code></td>
+            <td><strong>신림 청소마스터</strong></td>
+            <td>98,000원 (14건)</td>
+            <td>9,800원</td>
+            <td>우리은행 555-111-222333</td>
+            <td><span style="color:#10b981; font-weight:600;">✓ 수취 확인됨</span></td>
+            <td><span class="badge badge-draft">PENDING</span></td>
+            <td><button class="btn-action" onclick="alert('세금계산서 대조 완료: 지급 승인(APPROVED) 처리되었습니다.')">지급 승인</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

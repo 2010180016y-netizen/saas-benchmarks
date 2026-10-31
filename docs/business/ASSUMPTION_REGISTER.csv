@@ -1,0 +1,10 @@
+ID,Category,Hypothesis_Or_Assumption,Current_Evidence,Confidence_Level,Validation_Method,Owner,Risk_Impact,Status
+ASM-01,Supply_Moat,청소업체(A)는 예약 불가 시 고객을 버리는 대신 제휴 플랫폼에 넘겨 수익을 나누는 방식에 자발적으로 동의할 것이다,미확인 (경쟁 플랫폼 숨고는 견적비 과금 모델),LOW,지역 청소업체 5곳 심층 인터뷰 및 수수료 35% 배분 오퍼 검증,운영자,CRITICAL,UNVALIDATED
+ASM-02,Supply_Moat,청소업체(B)는 선불 광고비 없이 작업 완료 후 8%의 성과 수수료를 지급할 의사가 있을 것이다,숨고의 건당 1,500~4,000원 선불 캐시 소진 대비 성과 과금의 구조적 우위 추론,MEDIUM,실제 공급업체 2곳과 서면 파트너십 계약 체결 시도,운영자,CRITICAL,UNVALIDATED
+ASM-03,Demand,24~72시간 내 급행 입주/이사청소를 찾는 고객은 검증된 대체 업체 연결에 명시적으로 동의할 것이다,숨고 누적 257만건 중 긴급 일정 요청 존재 추정(공식 비율 미공개),MEDIUM,오버플로우 웹 위젯 A/B 테스트 및 동의 전환율 실측,PM,HIGH,UNVALIDATED
+ASM-04,Unit_Economics,국내 입주·이사청소의 건당 평균 결제금액은 250,000원 선일 것이다,숨고 공개 견적 데이터 기준 평균 250,000원 안내,HIGH,실제 매칭 성사 10건의 정산 영수증 실측 검증,FinOps,MEDIUM,PROVISIONAL
+ASM-05,Unit_Economics,완료 1건당 플랫폼 잔여 마진 13,000원(8% 수수료 20,000원 중 35% 파트너 배분 후)으로 월 1,000만원 달성을 위해서는 770건/월이 필요하다,수학적 역산 모델 (250,000 * 0.08 * 0.65 = 13,000),HIGH,재무 시뮬레이터 검증 완료,FinOps,HIGH,VALIDATED_CALC
+ASM-06,Operations,청소업체는 작업 완료 및 결제 사실을 플랫폼에 정직하게 보고할 것이다,업계 특성상 현금 결제나 직거래 유도로 인한 성과료 누락 가능성 상존,LOW,고객-공급자 양방향 완료 확인 및 사진 증빙 제출 의무화,운영자,CRITICAL,HIGH_RISK
+ASM-07,Legal,고객이 위젯에서 제공받는 업체를 인지하고 체크박스로 동의하면 개인정보보호법 제17조 제3자 제공 요건을 충족한다,개인정보보호법 제17조 법조문 및 개인정보보호위원회 표준 가이드라인,HIGH,법률 전문가 서면 검토 및 동의 영수증 암호화 로깅,Legal,CRITICAL,CONDITIONAL
+ASM-08,Technology,Cloudflare Workers 무료 플랜(일 10만건)과 D1(일 10만 쓰기)으로 초기 MVP를 0원 인프라로 운영할 수 있다,Cloudflare 공식 문서 무료 티어 명세 확인 완료,HIGH,부하 테스트 및 일일 쿼리 예산(Quota Budget) 시뮬레이션,Staff_Eng,LOW,VALIDATED
+ASM-09,Distribution,화이트라벨 위젯을 기존 청소업체 웹/모바일 페이지에 5분 내 임베드할 수 있다,바닐라 JS iframe 및 크로스 도메인 postMessage 프로토콜 표준 기술,HIGH,모의 파트너 사이트 연동 테스트베드 구현 검증,Staff_Eng,MEDIUM,TECHNICAL_PASS

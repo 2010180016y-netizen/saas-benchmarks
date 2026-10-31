@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SlotBridge Korea — 24~72시간 급행 입주·이사청소 잔여 슬롯 조회</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --border: #1f2937;
+      --text: #f9fafb;
+      --muted: #9ca3af;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --accent: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 16px 16px 40px;
+      display: flex;
+      justify-content: center;
+    }
+    .container { width: 100%; max-width: 500px; }
+    header { text-align: center; margin-bottom: 20px; }
+    .badge {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--primary);
+      background: rgba(59, 130, 246, 0.1);
+      border: 1px solid rgba(59, 130, 246, 0.25);
+      padding: 4px 10px;
+      border-radius: 9999px;
+      margin-bottom: 8px;
+    }
+    h1 { font-size: 21px; font-weight: 700; margin-bottom: 6px; }
+    p.desc { font-size: 13px; color: var(--muted); }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 16px;
+      margin-bottom: 16px;
+    }
+    .form-group { margin-bottom: 16px; }
+    label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #e5e7eb; }
+    input[type="text"], input[type="tel"], input[type="number"], select {
+      width: 100%;
+      background: #1f2937;
+      border: 1px solid #374151;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 14px;
+      color: #fff;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input:focus, select:focus { border-color: var(--primary); }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .radio-pill-group { display: flex; gap: 8px; }
+    .radio-pill {
+      flex: 1;
+      text-align: center;
+      background: #1f2937;
+      border: 1px solid #374151;
+      padding: 9px 4px;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .radio-pill input { display: none; }
+    .radio-pill.active {
+      background: rgba(59, 130, 246, 0.15);
+      border-color: var(--primary);
+      color: #93c5fd;
+      font-weight: 600;
+    }
+    .addons-group { display: flex; flex-direction: column; gap: 8px; }
+    .addon-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      cursor: pointer;
+      background: #1f2937;
+      border: 1px solid #374151;
+      padding: 8px 12px;
+      border-radius: 6px;
+    }
+    .terms-accordion {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .checkbox-block {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 12px;
+      cursor: pointer;
+      margin-bottom: 10px;
+    }
+    .checkbox-block input { margin-top: 2px; }
+    .notice-broker {
+      background: rgba(245, 158, 11, 0.08);
+      border: 1px solid rgba(245, 158, 11, 0.25);
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 11px;
+      color: #fde68a;
+      margin-bottom: 16px;
+      line-height: 1.45;
+    }
+    .btn-submit {
+      width: 100%;
+      background: var(--primary);
+      color: #fff;
+      font-weight: 700;
+      font-size: 15px;
+      padding: 14px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn-submit:hover { background: var(--primary-hover); }
+    #availability-banner {
+      display: none;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      margin-bottom: 16px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="badge">서울 관악·동작 권역 24~72h 급행 매칭</div>
+      <h1>버려진 빈 일정으로 찾는 빠른 청소</h1>
+      <p class="desc">일정 마감으로 거절당하셨나요? 관내 청소팀의 빈 일정에 1:1로 즉시 연결해 드립니다.</p>
+    </header>
+
+    <div class="card">
+      <form id="inquiry-form">
+        <input type="hidden" id="attribution_partner_id" value="">
+
+        <div class="form-group">
+          <label>1. 청소 희망 일시 (24~72시간 이내)</label>
+          <div class="grid-2">
+            <select id="requested_date" required></select>
+            <select id="time_window" required>
+              <option value="MORNING">오전 (09:00 ~ 13:00)</option>
+              <option value="AFTERNOON">오후 (13:00 ~ 18:00)</option>
+              <option value="ALL_DAY">종일 가용</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>2. 서비스 위치 (시/군/구·동)</label>
+          <div class="grid-2">
+            <select id="district" required onchange="updateNeighborhoods()">
+              <option value="관악구">서울특별시 관악구</option>
+              <option value="동작구">서울특별시 동작구</option>
+            </select>
+            <select id="neighborhood" required></select>
+          </div>
+          <small style="color:var(--muted); font-size:11px; margin-top:4px; display:block;">
+            * 상세 동·호수는 매칭이 확정된 후 담당 청소팀장님과 유선 통화 시 전달합니다.
+          </small>
+        </div>
+
+        <div class="form-group">
+          <label>3. 공간 정보 및 면적</label>
+          <div class="radio-pill-group" style="margin-bottom:8px;">
+            <label class="radio-pill active"><input type="radio" name="housing_type" value="STUDIO" checked>원룸</label>
+            <label class="radio-pill"><input type="radio" name="housing_type" value="TWO_ROOM">투룸</label>
+            <label class="radio-pill"><input type="radio" name="housing_type" value="OFFICETEL">오피스텔</label>
+            <label class="radio-pill"><input type="radio" name="housing_type" value="APARTMENT">아파트</label>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <input type="number" id="area_pyeong" required min="5" max="60" value="8" placeholder="전용면적 (평)">
+            <span style="font-size:13px; color:var(--muted); white-space:nowrap;">평 (약 <span id="area_sqm">26.4</span>㎡)</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>4. 추가 작업 선택 (선택 사항)</label>
+          <div class="addons-group">
+            <label class="addon-label"><input type="checkbox" value="VERANDA"> 베란다 / 다용도실 찌든때 청소</label>
+            <label class="addon-label"><input type="checkbox" value="MOLD_REMOVAL"> 욕실 / 창틀 실리콘 곰팡이 제거</label>
+            <label class="addon-label"><input type="checkbox" value="APPLIANCE_DEEP_CLEAN"> 에어컨 / 냉장고 내부 분해청소</label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>5. 신청자 연락처 (연결용 필수)</label>
+          <div class="grid-2">
+            <input type="text" id="customer_name" required placeholder="성명 (예: 김관악)">
+            <input type="tel" id="customer_phone" required placeholder="010-1234-5678" maxlength="13">
+          </div>
+        </div>
+
+        <!-- 실시간 가용성 안내 배너 -->
+        <div id="availability-banner"></div>
+
+        <!-- 통신판매중개자 법정 고지문 -->
+        <div class="notice-broker">
+          ⚖️ <strong>통신판매중개 고지 및 견적 안내:</strong><br>
+          SlotBridge Korea는 통신판매중개자로서 거래 당사자가 아니며, 입주·이사청소 시공 및 하자에 대한 모든 책임은 실제 용역을 공급하는 개별 청소업체에 있습니다. 최종 시공 견적은 청소팀장님과 유선 상담 시 확정되며, 대금은 현장에서 청소팀에 직접 결제합니다.
+        </div>
+
+        <!-- 법정 필수 동의 영역 (개보법 제17조) -->
+        <div class="terms-accordion">
+          <strong>개인정보 제3자 제공 동의 요약:</strong><br>
+          • 제공받는 자: 매칭 확정된 관내 청소 파트너사 1곳 (배타적 제공)<br>
+          • 제공 목적: 급행 청소 유선 상담, 최종 견적 확정 및 현장 시공<br>
+          • 제공 항목: 성명, 연락처, 주소(시/군/구/동), 공간 형태 및 면적<br>
+          • 보유 기간: 시공 완료 후 30일 보관 후 영구 파기 (A/S 대응용)
+        </div>
+
+        <label class="checkbox-block">
+          <input type="checkbox" id="agreed_privacy_collection" required>
+          <span><strong>[필수]</strong> 개인정보 수집 및 이용에 동의합니다. (최소 필수 항목)</span>
+        </label>
+
+        <label class="checkbox-block">
+          <input type="checkbox" id="agreed_third_party_share" required>
+          <span><strong>[필수]</strong> 매칭 확정 청소업체 1곳에 대한 개인정보 제3자 제공에 동의합니다. (다수 업체 판매 금지)</span>
+        </label>
+
+        <label class="checkbox-block">
+          <input type="checkbox" id="agreed_marketing">
+          <span style="color:var(--muted);">[선택] 청소 및 생활 할인 혜택 알림 수신에 동의합니다. (기본 해제)</span>
+        </label>
+
+        <button type="submit" class="btn-submit">24~72h 급행 잔여 슬롯 매칭 신청</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // 1. Setup Dates (Tomorrow to +3 days in Seoul Time)
+    const dateSelect = document.getElementById('requested_date');
+    const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+    for (let i = 1; i <= 3; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      const iso = d.toISOString().split('T')[0];
+      const opt = document.createElement('option');
+      opt.value = iso;
+      opt.textContent = `${iso} (${dayNames[d.getDay()]}) ${i === 1 ? '내일 급행' : ''}`;
+      dateSelect.appendChild(opt);
+    }
+
+    // 2. Setup Neighborhoods
+    const neighborhoods = {
+      '관악구': ['봉천동', '신림동', '남현동', '낙성대동', '대학동', '서원동'],
+      '동작구': ['사당동', '노량진동', '상도동', '대방동', '신대방동', '흑석동']
+    };
+    function updateNeighborhoods() {
+      const dist = document.getElementById('district').value;
+      const nbSelect = document.getElementById('neighborhood');
+      nbSelect.innerHTML = '';
+      neighborhoods[dist].forEach(n => {
+        const opt = document.createElement('option');
+        opt.value = n;
+        opt.textContent = n;
+        nbSelect.appendChild(opt);
+      });
+    }
+    updateNeighborhoods();
+
+    // 3. Area sqm calculation
+    document.getElementById('area_pyeong').addEventListener('input', function(e) {
+      const py = parseFloat(e.target.value) || 0;
+      document.getElementById('area_sqm').textContent = (py * 3.305785).toFixed(1);
+    });
+
+    // 4. Radio pills styling
+    document.querySelectorAll('.radio-pill').forEach(pill => {
+      pill.addEventListener('click', function() {
+        document.querySelectorAll('.radio-pill').forEach(p => p.classList.remove('active'));
+        this.classList.add('active');
+      });
+    });
+
+    // 5. Attribution parameter from URL
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('ref')) {
+      document.getElementById('attribution_partner_id').value = params.get('ref');
+    }
+
+    // 6. Form Submission
+    document.getElementById('inquiry-form').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const col = document.getElementById('agreed_privacy_collection').checked;
+      const share = document.getElementById('agreed_third_party_share').checked;
+      if (!col || !share) {
+        alert('필수 개인정보 동의 2건을 모두 체크해 주셔야 신청이 가능합니다.');
+        return;
+      }
+
+      const phone = document.getElementById('customer_phone').value.trim();
+      if (!/^010-\d{4}-\d{4}$/.test(phone)) {
+        alert('전화번호를 010-XXXX-XXXX 형식으로 입력해 주세요.');
+        return;
+      }
+
+      // Generate simulation token
+      const mockToken = 'cst_' + Math.random().toString(36).substring(2, 10);
+      window.location.href = `status.html?token=${mockToken}&date=${document.getElementById('requested_date').value}&dist=${document.getElementById('district').value}`;
+    });
+  </script>
+</body>
+</html>

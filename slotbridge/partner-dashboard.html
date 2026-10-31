@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SlotBridge Korea — 리퍼럴 파트너 수익 대시보드</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --border: #1f2937;
+      --text: #f9fafb;
+      --muted: #9ca3af;
+      --primary: #3b82f6;
+      --accent: #10b981;
+      --warning: #f59e0b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 20px 16px 40px;
+      display: flex;
+      justify-content: center;
+    }
+    .container { width: 100%; max-width: 640px; }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    h1 { font-size: 20px; font-weight: 700; }
+    .partner-tag { font-size: 12px; color: var(--muted); }
+    .grid-stats {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .stat-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .stat-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .stat-val { font-size: 24px; font-weight: 700; color: #fff; }
+    .stat-highlight { color: var(--accent); }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 16px;
+      margin-bottom: 20px;
+    }
+    h3 { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
+    .copy-group { display: flex; gap: 8px; margin-top: 8px; }
+    .copy-group input {
+      flex: 1;
+      background: #1f2937;
+      border: 1px solid #374151;
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-size: 13px;
+      color: #93c5fd;
+      font-family: monospace;
+    }
+    .btn-copy {
+      background: var(--primary);
+      color: #fff;
+      font-weight: 600;
+      font-size: 13px;
+      padding: 0 16px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .settle-notice {
+      background: rgba(16, 185, 129, 0.08);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 12px;
+      color: #6ee7b7;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>신림 청소마스터 (리퍼럴 파트너)</h1>
+        <p class="partner-tag">오버플로우 제휴 코드: <code>partner_sl_master</code></p>
+      </div>
+      <span style="font-size:12px; color:#34d399; font-weight:600; background:rgba(16,185,129,0.15); padding:4px 8px; border-radius:4px;">승인 파트너</span>
+    </header>
+
+    <!-- 퍼널 성과 지표 -->
+    <div class="grid-stats">
+      <div class="stat-card">
+        <div class="stat-label">누적 위젯 클릭수</div>
+        <div class="stat-val">124회</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">유효 고객 접수 (인입)</div>
+        <div class="stat-val">18건</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">시공 완료 검증 (성공)</div>
+        <div class="stat-val">14건</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">누적 정산 예정 수익 (35%)</div>
+        <div class="stat-val stat-highlight">98,000원</div>
+      </div>
+    </div>
+
+    <!-- 문자 안내용 다이렉트 링크 -->
+    <div class="card">
+      <h3>📱 고객 안내용 다이렉트 문자 링크</h3>
+      <p style="font-size:12px; color:var(--muted);">
+        전화 상담 중 스케줄이 마감되었을 때, 아래 링크를 고객님께 문자로 전송하시면 자사 기여도로 자동 결속됩니다:
+      </p>
+      <div class="copy-group">
+        <input type="text" id="sms-url" readonly value="https://saas-benchmarks.pages.dev/slotbridge/inquiry.html?ref=partner_sl_master">
+        <button class="btn-copy" onclick="copyLink()">링크 복사</button>
+      </div>
+    </div>
+
+    <!-- 정산 안내 -->
+    <div class="settle-notice">
+      💰 <strong>수수료 정산 안내:</strong><br>
+      • 건당 정산액: 시공 완료 건당 7,000원 (플랫폼 8% 수수료 중 35% 배분, VAT 별도)<br>
+      • 정산 주기: 익월 5일 정산서 확정 → 전자세금계산서 수취 후 <strong>익월 15일</strong> 계좌 입금<br>
+      • 정산 계좌: 우리은행 555-111-222333 (예금주: 신림 청소마스터 이대표)
+    </div>
+  </div>
+
+  <script>
+    function copyLink() {
+      const input = document.getElementById('sms-url');
+      input.select();
+      document.execCommand('copy');
+      alert('고객 안내용 리퍼럴 링크가 클립보드에 복사되었습니다!\n문자로 전송 시 고객 유입이 자동 기록됩니다.');
+    }
+  </script>
+</body>
+</html>

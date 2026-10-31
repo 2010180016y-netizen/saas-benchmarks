@@ -1,0 +1,446 @@
+openapi: 3.0.3
+info:
+  title: SlotBridge Korea Engine API
+  version: 1.0.0
+  description: >
+    한국형 B2B2C 24~72시간 급행 입주·이사청소 잔여 슬롯 매칭 및 성과 정산 플랫폼 API.
+    Cloudflare Workers + D1 SQLite 기반의 서버리스 0원 아키텍처.
+servers:
+  - url: https://saas-benchmarks.pages.dev/api
+    description: Production Edge Worker
+  - url: http://localhost:8787/api
+    description: Local Wrangler Dev Server
+
+paths:
+  /inquiries:
+    post:
+      summary: 신규 급행 청소 매칭 접수 및 법정 동의 등록
+      operationId: createInquiry
+      headers:
+        Idempotency-Key:
+          schema:
+            type: string
+            format: uuid
+          description: 중복 인입 방지 멱등성 키
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InquiryCreateRequest'
+      responses:
+        '201':
+          description: 접수 완료 및 상태 조회 토큰 반환
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InquiryCreateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /inquiries/{token}:
+    get:
+      summary: 고객 매칭 진행 상태 조회
+      operationId: getInquiryStatus
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InquiryStatusResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: 고객 동의 즉시 철회 및 개인정보 완전 영구 파기
+      operationId: revokeInquiry
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevocationSuccessResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /partner/slots:
+    get:
+      summary: 수행 파트너 잔여 가용 슬롯 목록 조회
+      operationId: getPartnerSlots
+      security:
+        - PartnerTokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CapacitySlot'
+    post:
+      summary: 수행 파트너 24~72시간 잔여 슬롯 신규 등록
+      operationId: createPartnerSlot
+      security:
+        - PartnerTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SlotCreateRequest'
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapacitySlot'
+        '409':
+          description: 동일 일시 중복 슬롯 존재
+
+  /partner/offers:
+    get:
+      summary: 수행 파트너 대기 중인 15분 배타적 오퍼 조회
+      operationId: getPendingOffers
+      security:
+        - PartnerTokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AssignmentOffer'
+
+  /partner/offers/{offer_id}/accept:
+    post:
+      summary: 15분 배타적 오퍼 명시적 수락 (고객 연락처 1회성 복호화 반환)
+      operationId: acceptOffer
+      security:
+        - PartnerTokenAuth: []
+      parameters:
+        - name: offer_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 수락 성공 및 고객 유선 연락처 복호화 제공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfferAcceptResponse'
+        '409':
+          description: 15분 타임아웃 경과 또는 타 파트너 재배정됨
+
+  /partner/offers/{offer_id}/reject:
+    post:
+      summary: 오퍼 거절 (차순위 파트너로 즉시 자동 재배정)
+      operationId: rejectOffer
+      security:
+        - PartnerTokenAuth: []
+      parameters:
+        - name: offer_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 거절 처리 완료 및 다음 후보 라우팅 개시
+
+  /partner/fulfillment:
+    post:
+      summary: 시공 완료 보고 및 사진 증빙 제출
+      operationId: submitFulfillment
+      security:
+        - PartnerTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FulfillmentReportRequest'
+      responses:
+        '201':
+          description: 완료 증빙 수납 및 교차 검증 대기 전환
+
+  /admin/reconciliations:
+    get:
+      summary: 월간 B2B 성과 수수료 및 리퍼럴 배분 정산 원장 조회
+      operationId: getMonthlyReconciliations
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: month
+          in: query
+          required: true
+          schema:
+            type: string
+            example: '2026-10'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationReport'
+
+components:
+  securitySchemes:
+    PartnerTokenAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    AdminAuth:
+      type: apiKey
+      in: header
+      name: X-Admin-Secret
+
+  schemas:
+    InquiryCreateRequest:
+      type: object
+      required:
+        - requested_date
+        - time_window
+        - district
+        - neighborhood
+        - housing_type
+        - area_pyeong
+        - customer_name
+        - customer_phone
+        - agreed_privacy_collection
+        - agreed_third_party_share
+      properties:
+        attribution_partner_id:
+          type: string
+          example: 'partner_clean_gwanak_01'
+        requested_date:
+          type: string
+          format: date
+          example: '2026-11-02'
+        time_window:
+          type: string
+          enum: [MORNING, AFTERNOON, ALL_DAY]
+        district:
+          type: string
+          enum: [관악구, 동작구]
+        neighborhood:
+          type: string
+          example: '봉천동'
+        housing_type:
+          type: string
+          enum: [STUDIO, TWO_ROOM, OFFICETEL, APARTMENT]
+        area_pyeong:
+          type: integer
+          minimum: 5
+          maximum: 60
+        add_ons:
+          type: array
+          items:
+            type: string
+            enum: [VERANDA, MOLD_REMOVAL, APPLIANCE_DEEP_CLEAN]
+        customer_name:
+          type: string
+          example: '김관악'
+        customer_phone:
+          type: string
+          pattern: '^010-[0-9]{4}-[0-9]{4}$'
+        agreed_privacy_collection:
+          type: boolean
+          enum: [true]
+        agreed_third_party_share:
+          type: boolean
+          enum: [true]
+        agreed_marketing:
+          type: boolean
+          default: false
+
+    InquiryCreateResponse:
+      type: object
+      properties:
+        inquiry_id:
+          type: string
+          format: uuid
+        tracking_token:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [PENDING_MATCH, MATCHED, EXPIRED]
+        status_url:
+          type: string
+          example: '/slotbridge/status?token=9f83a21b-4d7a...'
+
+    InquiryStatusResponse:
+      type: object
+      properties:
+        inquiry_id:
+          type: string
+        status:
+          type: string
+        district:
+          type: string
+        housing_type:
+          type: string
+        matched_partner_name:
+          type: string
+          nullable: true
+
+    RevocationSuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+          example: '개인정보가 영구히 파기되었으며 매칭 요청이 취소되었습니다.'
+
+    CapacitySlot:
+      type: object
+      properties:
+        slot_id:
+          type: string
+        slot_date:
+          type: string
+          format: date
+        time_window:
+          type: string
+        status:
+          type: string
+          enum: [AVAILABLE, OFFERED, RESERVED, COMPLETED]
+
+    SlotCreateRequest:
+      type: object
+      required:
+        - slot_date
+        - time_window
+      properties:
+        slot_date:
+          type: string
+          format: date
+        time_window:
+          type: string
+          enum: [MORNING, AFTERNOON]
+
+    AssignmentOffer:
+      type: object
+      properties:
+        offer_id:
+          type: string
+        inquiry_id:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        district:
+          type: string
+        neighborhood:
+          type: string
+        housing_type:
+          type: string
+        area_pyeong:
+          type: integer
+        estimated_amount:
+          type: integer
+
+    OfferAcceptResponse:
+      type: object
+      properties:
+        offer_id:
+          type: string
+        match_status:
+          type: string
+          example: 'CONFIRMED'
+        decrypted_customer_name:
+          type: string
+          example: '김관악'
+        decrypted_customer_phone:
+          type: string
+          example: '010-1234-5678'
+
+    FulfillmentReportRequest:
+      type: object
+      required:
+        - match_id
+        - final_service_amount
+        - evidence_photo_urls
+      properties:
+        match_id:
+          type: string
+        final_service_amount:
+          type: integer
+          example: 240000
+        evidence_photo_urls:
+          type: array
+          items:
+            type: string
+          minItems: 2
+          maxItems: 5
+
+    ReconciliationReport:
+      type: object
+      properties:
+        month:
+          type: string
+        total_completed_count:
+          type: integer
+        total_service_volume:
+          type: integer
+        total_platform_fee:
+          type: integer
+        total_referral_payout:
+          type: integer
+        net_platform_profit:
+          type: integer
+
+  responses:
+    BadRequest:
+      description: 입력값 검증 실패 또는 필수 동의 누락
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: 리소스를 찾을 수 없음
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TooManyRequests:
+      description: Rate Limit 초과 (IP당 분당 10회 제한)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    ErrorResponse:
+      type: object
+      properties:
+        error_code:
+          type: string
+          example: 'INVALID_INPUT'
+        message:
+          type: string
+          example: '개인정보 수집 및 제3자 제공 동의는 필수입니다.'
+        timestamp:
+          type: string
+          format: date-time

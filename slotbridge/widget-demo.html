@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SlotBridge Korea — 화이트라벨 위젯 연동 데모</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 30px 16px;
+      line-height: 1.6;
+    }
+    .wrapper { max-width: 680px; margin: 0 auto; }
+    .host-site-mock {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    .host-header {
+      border-bottom: 1px solid #334155;
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .host-logo { font-size: 18px; font-weight: 700; color: #38bdf8; }
+    .code-box {
+      background: #020617;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 14px;
+      font-family: monospace;
+      font-size: 13px;
+      color: #38bdf8;
+      overflow-x: auto;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <h2>원 유입업체 화이트라벨 오버플로우 위젯 시연</h2>
+    <p style="color:#94a3b8; font-size:14px; margin-bottom:20px;">
+      제휴 청소업체가 예약 마감 시, 자사 사이트에 스크립트 1줄을 삽입하여 오버플로우 고객을 연결하고 35% 수수료를 정산받습니다.
+    </p>
+
+    <!-- 모의 호스트 사이트 (클린홈 관악본점 예약 마감 화면) -->
+    <div class="host-site-mock">
+      <div class="host-header">
+        <div class="host-logo">🏠 클린홈 관악본점 (공식 사이트)</div>
+        <span style="font-size:12px; color:#f87171; font-weight:600;">[현재 3일간 예약 마감]</span>
+      </div>
+      <p style="font-size:13px; color:#cbd5e1;">
+        죄송합니다. 현재 클린홈의 작업팀 스케줄이 모두 마감되어 추가 상담 접수가 어렵습니다.
+      </p>
+
+      <!-- 실제 임베드된 SlotBridge Korea 위젯 -->
+      <script src="./widget.js" 
+              data-partner="partner_gw_cleanhome" 
+              data-partner-name="클린홈 관악본점" 
+              data-theme="dark" 
+              data-district="서울 관악구"></script>
+    </div>
+
+    <div class="host-site-mock">
+      <h3>📋 제휴 파트너용 1-Click 임베드 코드</h3>
+      <p style="font-size:13px; color:#94a3b8;">
+        자사 웹사이트의 예약 마감 안내 페이지 또는 팝업 모달 HTML 하단에 아래 스크립트를 붙여넣으세요:
+      </p>
+      <div class="code-box">
+&lt;script src="https://saas-benchmarks.pages.dev/slotbridge/widget.js"<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;data-partner="YOUR_PARTNER_ID"<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;data-partner-name="귀사 상호명"<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;data-theme="dark"&gt;&lt;/script&gt;
+      </div>
+    </div>
+  </div>
+</body>
+</html>

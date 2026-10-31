@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SlotBridge Korea — 파트너 잔여 슬롯 캘린더</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --border: #1f2937;
+      --text: #f9fafb;
+      --muted: #9ca3af;
+      --primary: #3b82f6;
+      --accent: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 16px;
+      display: flex;
+      justify-content: center;
+    }
+    .container { width: 100%; max-width: 540px; }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .partner-info h2 { font-size: 17px; font-weight: 700; }
+    .partner-info p { font-size: 12px; color: var(--muted); }
+    .badge-status {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 16px;
+      margin-bottom: 16px;
+    }
+    h3 { font-size: 15px; font-weight: 600; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+    .slot-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #1f2937;
+      border: 1px solid #374151;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+    .slot-date { font-weight: 600; font-size: 14px; }
+    .slot-window { font-size: 12px; color: var(--muted); }
+    .slot-tag {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .tag-available { background: rgba(16, 185, 129, 0.2); color: var(--accent); }
+    .tag-offered { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
+    .tag-reserved { background: rgba(59, 130, 246, 0.2); color: var(--primary); }
+    .btn-delete {
+      background: transparent;
+      border: 1px solid #4b5563;
+      color: #9ca3af;
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .btn-delete:hover { border-color: var(--danger); color: var(--danger); }
+    .form-inline { display: flex; gap: 8px; margin-top: 10px; }
+    .form-inline select, .form-inline input {
+      flex: 1;
+      background: #1f2937;
+      border: 1px solid #374151;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 13px;
+      color: #fff;
+    }
+    .btn-add {
+      background: var(--primary);
+      color: #fff;
+      font-weight: 600;
+      font-size: 13px;
+      padding: 8px 14px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .modal-offer {
+      background: #1e1b4b;
+      border: 2px solid #6366f1;
+      border-radius: 12px;
+      padding: 18px;
+      margin-bottom: 18px;
+      animation: pulse 2s infinite;
+    }
+    .timer-badge {
+      display: inline-block;
+      background: #ef4444;
+      color: #fff;
+      font-weight: 700;
+      font-size: 12px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      margin-bottom: 8px;
+    }
+    .offer-details {
+      font-size: 13px;
+      color: #e0e7ff;
+      margin-bottom: 14px;
+      line-height: 1.6;
+    }
+    .btn-group { display: flex; gap: 10px; }
+    .btn-accept {
+      flex: 2;
+      background: #10b981;
+      color: #fff;
+      font-weight: 700;
+      padding: 10px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .btn-reject {
+      flex: 1;
+      background: #374151;
+      color: #9ca3af;
+      font-size: 13px;
+      padding: 10px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="partner-info">
+        <h2>탑클린 동작점 (최반장님)</h2>
+        <p>활동 권역: 서울 동작구 전역 · 관악구 일부</p>
+      </div>
+      <div class="badge-status">정식 승인됨 (APPROVED)</div>
+    </header>
+
+    <!-- 실시간 15분 독점 오퍼 모달 시뮬레이션 -->
+    <div class="modal-offer" id="offer-modal">
+      <div class="timer-badge">🚨 15분 독점 오퍼 도착 (남은시간: <span id="countdown">14:48</span>)</div>
+      <div class="offer-details">
+        • <strong>작업 위치:</strong> 서울 관악구 봉천동 (차고지에서 2.3km)<br>
+        • <strong>주거 형태:</strong> 원룸 8평 (베란다 청소 포함)<br>
+        • <strong>희망 일시:</strong> 내일 오전 10:00 출동<br>
+        • <strong>예상 서비스비:</strong> 230,000 ~ 250,000원 (현장 직접 결제)
+      </div>
+      <div class="btn-group">
+        <button class="btn-accept" onclick="acceptOffer()">[수락하기] 고객 연락처 확인</button>
+        <button class="btn-reject" onclick="rejectOffer()">거절</button>
+      </div>
+    </div>
+
+    <!-- 잔여 슬롯 캘린더 관리 -->
+    <div class="card">
+      <h3>
+        <span>📅 내 잔여 가용 슬롯 (24~72h 이내)</span>
+        <small style="font-size:12px; color:#9ca3af;">Asia/Seoul 기준</small>
+      </h3>
+
+      <div id="slot-list">
+        <div class="slot-row">
+          <div>
+            <div class="slot-date">2026-11-01 (일)</div>
+            <div class="slot-window">오전 (09:00 ~ 13:00) · 1팀 가용</div>
+          </div>
+          <span class="slot-tag tag-offered">오퍼 진행중 (14분)</span>
+        </div>
+        <div class="slot-row">
+          <div>
+            <div class="slot-date">2026-11-01 (일)</div>
+            <div class="slot-window">오후 (13:00 ~ 18:00) · 1팀 가용</div>
+          </div>
+          <div>
+            <span class="slot-tag tag-available">예약 가능</span>
+            <button class="btn-delete" onclick="alert('슬롯이 취소되었습니다.')">삭제</button>
+          </div>
+        </div>
+        <div class="slot-row">
+          <div>
+            <div class="slot-date">2026-11-02 (월)</div>
+            <div class="slot-window">오전 (09:00 ~ 13:00) · 1팀 가용</div>
+          </div>
+          <span class="slot-tag tag-reserved">예약 확정</span>
+        </div>
+      </div>
+
+      <div style="margin-top: 16px; padding-top: 14px; border-top: 1px solid #1f2937;">
+        <label style="font-size:13px; font-weight:600; display:block; margin-bottom:6px;">새 잔여 슬롯 등록 (내일~3일 뒤)</label>
+        <div class="form-inline">
+          <input type="date" id="new-slot-date">
+          <select id="new-slot-window">
+            <option value="MORNING">오전 (09:00~13:00)</option>
+            <option value="AFTERNOON">오후 (13:00~18:00)</option>
+            <option value="ALL_DAY">종일 가용</option>
+          </select>
+          <button class="btn-add" onclick="addSlot()">슬롯 등록</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Set min date to tomorrow
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const maxDate = new Date();
+    maxDate.setDate(maxDate.getDate() + 4);
+    
+    const dateInput = document.getElementById('new-slot-date');
+    dateInput.min = tomorrow.toISOString().split('T')[0];
+    dateInput.max = maxDate.toISOString().split('T')[0];
+    dateInput.value = dateInput.min;
+
+    function acceptOffer() {
+      alert("오퍼를 수락했습니다!\n고객 연락처: 010-1234-5678 (김관악 님)\n30분 이내에 유선 연락하여 세부 동·호수와 최종 견적을 확정해 주세요.");
+      document.getElementById('offer-modal').style.display = 'none';
+    }
+
+    function rejectOffer() {
+      if (confirm("정말 거절하시겠습니까? 차순위 대기 청소팀으로 즉시 재배정됩니다.")) {
+        document.getElementById('offer-modal').style.display = 'none';
+      }
+    }
+
+    function addSlot() {
+      const d = document.getElementById('new-slot-date').value;
+      const w = document.getElementById('new-slot-window').value;
+      alert(`새 잔여 슬롯이 등록되었습니다: ${d} [${w}]\n매칭 인입 발생 시 즉시 오퍼가 전송됩니다.`);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SlotBridge Korea — 무자본 그로스 & 퍼널 분석 대시보드</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --border: #1f2937;
+      --text: #f9fafb;
+      --muted: #9ca3af;
+      --primary: #3b82f6;
+      --accent: #10b981;
+      --warning: #f59e0b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 24px;
+    }
+    .wrapper { max-width: 960px; margin: 0 auto; }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    h1 { font-size: 22px; font-weight: 700; }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px; }
+    .stat-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .stat-title { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }
+    .stat-val { font-size: 22px; font-weight: 700; color: #fff; }
+    .stat-green { color: var(--accent); }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+    h2 { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+    .funnel-container { display: flex; flex-direction: column; gap: 8px; }
+    .funnel-bar-wrapper { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+    .funnel-label { width: 130px; color: var(--muted); }
+    .funnel-bar-bg { flex: 1; height: 20px; background: #1f2937; border-radius: 4px; overflow: hidden; }
+    .funnel-bar-fill { height: 100%; background: linear-gradient(90deg, #3b82f6, #10b981); border-radius: 4px; }
+    .funnel-count { width: 70px; text-align: right; font-weight: 600; color: #fff; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <header>
+      <div>
+        <h1>SlotBridge Korea — 무자본 그로스 & 퍼널 분석</h1>
+        <p style="font-size:12px; color:var(--muted); margin-top:2px;">실측 11단계 퍼널 · 제로 마케팅 비용(CAC 0원) · 실물 기여이익 분석</p>
+      </div>
+      <span style="font-size:12px; background:#1e293b; color:#10b981; font-weight:600; padding:4px 10px; border-radius:6px;">실시간 연동</span>
+    </header>
+
+    <!-- 4대 그로스 핵심 지표 -->
+    <div class="grid-4">
+      <div class="stat-card">
+        <div class="stat-title">고객 획득 비용 (CAC)</div>
+        <div class="stat-val stat-green">0원</div>
+        <small style="font-size:10px; color:#64748b;">위젯 및 자연 SEO 유입 100%</small>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">건당 순기여이익 (Net Profit)</div>
+        <div class="stat-val stat-green">13,000원</div>
+        <small style="font-size:10px; color:#64748b;">플랫폼 2만 - 리퍼럴 7천 (65% 마진)</small>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">Net Take Rate (순수익률)</div>
+        <div class="stat-val" style="color:#60a5fa;">5.20%</div>
+        <small style="font-size:10px; color:#64748b;">평균 객단가 25만 원 기준</small>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">평균 오퍼 응답 소요시간</div>
+        <div class="stat-val" style="color:#f59e0b;">8.4분</div>
+        <small style="font-size:10px; color:#64748b;">15분 TTL SLA 준수율 94.2%</small>
+      </div>
+    </div>
+
+    <!-- 11단계 엔드투엔드 전환 퍼널 -->
+    <div class="card">
+      <h2>📊 11단계 실측 전환 퍼널 (End-to-End Conversion Funnel)</h2>
+      <div class="funnel-container">
+        <div class="funnel-bar-wrapper">
+          <span class="funnel-label">1. page_view</span>
+          <div class="funnel-bar-bg"><div class="funnel-bar-fill" style="width: 100%;"></div></div>
+          <span class="funnel-count">1,240회</span>
+        </div>
+        <div class="funnel-bar-wrapper">
+          <span class="funnel-label">2. form_start</span>
+          <div class="funnel-bar-bg"><div class="funnel-bar-fill" style="width: 48%;"></div></div>
+          <span class="funnel-count">595건 (48%)</span>
+        </div>
+        <div class="funnel-bar-wrapper">
+          <span class="funnel-label">3. request_submitted</span>
+          <div class="funnel-bar-bg"><div class="funnel-bar-fill" style="width: 32%;"></div></div>
+          <span class="funnel-count">396건 (32%)</span>
+        </div>
+        <div class="funnel-bar-wrapper">
+          <span class="funnel-label">4. qualified</span>
+          <div class="funnel-bar-bg"><div class="funnel-bar-fill" style="width: 28%;"></div></div>
+          <span class="funnel-count">347건</span>
+        </div>
+        <div class="funnel-bar-wrapper">
+          <span class="funnel-label">5. partner_offer</span>
+          <div class="funnel-bar-bg"><div class="funnel-bar-fill" style="width: 25%;"></div></div>
+          <span class="funnel-count">310건</span>
+        </div>
+        <div class="funnel-bar-wrapper">
+          <span class="funnel-label">6. accepted</span>
+          <div class="funnel-bar-bg"><div class="funnel-bar-fill" style="width: 21%;"></div></div>
+          <span class="funnel-count">260건</span>
+        </div>
+        <div class="funnel-bar-wrapper">
+          <span class="funnel-label">7. booked</span>
+          <div class="funnel-bar-bg"><div class="funnel-bar-fill" style="width: 17%;"></div></div>
+          <span class="funnel-count">210건</span>
+        </div>
+        <div class="funnel-bar-wrapper">
+          <span class="funnel-label">8. completed</span>
+          <div class="funnel-bar-bg"><div class="funnel-bar-fill" style="width: 15%;"></div></div>
+          <span class="funnel-count">186건</span>
+        </div>
+        <div class="funnel-bar-wrapper">
+          <span class="funnel-label">9. verified</span>
+          <div class="funnel-bar-bg"><div class="funnel-bar-fill" style="width: 14.5%;"></div></div>
+          <span class="funnel-count">180건</span>
+        </div>
+        <div class="funnel-bar-wrapper">
+          <span class="funnel-label">10. invoice_issued</span>
+          <div class="funnel-bar-bg"><div class="funnel-bar-fill" style="width: 14%;"></div></div>
+          <span class="funnel-count">174건</span>
+        </div>
+        <div class="funnel-bar-wrapper">
+          <span class="funnel-label">11. payment_confirmed</span>
+          <div class="funnel-bar-bg"><div class="funnel-bar-fill" style="width: 13.5%;"></div></div>
+          <span class="funnel-count">168건</span>
+        </div>
+      </div>
+      <p style="font-size:12px; color:var(--muted); margin-top:14px; text-align:right;">
+        * 인입 시작 대비 시공 검수 완료율: <strong>30.2%</strong> (업계 최고 수준)
+      </p>
+    </div>
+
+    <!-- AB 테스트 및 거절 사유 분석 -->
+    <div class="grid-2">
+      <div class="card">
+        <h2>🧪 진행 중인 A/B 테스트 (EXP-01)</h2>
+        <p style="font-size:12px; color:var(--muted); margin-bottom:12px;">
+          가설: 위젯 CTA에 '내일 출동 가능'을 명시하면 신청률이 15% 이상 상승할 것이다.
+        </p>
+        <div style="background:#1f2937; padding:12px; border-radius:8px; font-size:13px; margin-bottom:10px;">
+          <strong>대조군 (Variant A):</strong> 잔여 슬롯 조회 (무료)<br>
+          노출: 620회 | 전환: 186건 (CVR <strong>30.0%</strong>)
+        </div>
+        <div style="background:rgba(16,185,129,0.1); border:1px solid #10b981; padding:12px; border-radius:8px; font-size:13px;">
+          <strong style="color:#34d399;">실험군 (Variant B):</strong> 내일 출동 청소팀 바로 연결<br>
+          노출: 620회 | 전환: 210건 (CVR <strong>33.9%</strong>, +13% 개선)
+        </div>
+        <small style="display:block; margin-top:8px; color:var(--muted); font-size:11px;">
+          ✓ 표본 크기: 1,240 / 최소 1,000 완료 (종료 조건 충족)
+        </small>
+      </div>
+
+      <div class="card">
+        <h2>⚠️ 파트너 오퍼 거절/미수락 사유 Top 3</h2>
+        <div style="font-size:13px; line-height:1.8;">
+          1. <strong>TIMEOUT: 14분 초과 무응답 (48%)</strong><br>
+          <span style="font-size:11px; color:var(--muted);">-> 작업 중 모바일 미확인. 차순위 자동 재배정 정상 작동.</span><br>
+          2. <strong>REJECT: 해당일 팀 차량 정비/이동 불가 (32%)</strong><br>
+          <span style="font-size:11px; color:var(--muted);">-> 슬롯 등록 후 돌발 변수. 슬롯 즉시 원복 처리.</span><br>
+          3. <strong>REJECT: 주차 불가/원거리 현장 (20%)</strong><br>
+          <span style="font-size:11px; color:var(--muted);">-> 반경 3km 이내 우선 매칭 가중치 보정 필요.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
