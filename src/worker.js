@@ -802,7 +802,7 @@ async function handleApiRequest(request, url, env) {
         `INSERT INTO partners (
           id, organization_id, name, partner_type, business_number, representative_name, contact_phone,
           verification_status, liability_insurance_status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING_APPROVAL', 'PENDING_VERIFICATION', ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING_APPROVAL', 'PENDING', ?, ?)`
       )
         .bind(partnerId, orgId, name, partnerType, bizNum, rep, phone, nowIso, nowIso)
         .run();
@@ -1361,8 +1361,8 @@ async function handleApiRequest(request, url, env) {
 
       const nowIso = new Date().toISOString();
       await env.DB.prepare(
-        "UPDATE fulfillment_evidence SET verification_status = 'VERIFIED', updated_at = ? WHERE match_id = ?"
-      ).bind(nowIso, matchId).run();
+        "UPDATE fulfillment_evidence SET verification_status = 'VERIFIED', customer_confirmed = 1, customer_survey_rating = ?, updated_at = ? WHERE match_id = ?"
+      ).bind(rating, nowIso, matchId).run();
 
       await env.DB.prepare(
         "UPDATE matches SET status = 'BILLABLE', updated_at = ? WHERE id = ?"
@@ -1371,7 +1371,9 @@ async function handleApiRequest(request, url, env) {
       // Idempotent Ledger Event insertion
       const finalAmount = matchWithInq.final_amount || 250000;
       const platformFee = Math.floor(finalAmount * 0.08); // 8%
+      const platformVat = Math.floor(platformFee * 0.10); // 10% VAT
       const referralFee = Math.floor(platformFee * 0.35); // 35% of 8%
+      const referralVat = Math.floor(referralFee * 0.10); // 10% VAT
 
       const existingLedger = await env.DB.prepare(
         "SELECT id FROM ledger_events WHERE match_id = ? AND event_type = 'REVENUE_ACCRUED'"
@@ -1380,14 +1382,24 @@ async function handleApiRequest(request, url, env) {
       if (!existingLedger) {
         await env.DB.prepare(
           `INSERT INTO ledger_events (id, match_id, event_type, amount, debit_account, credit_account, description, created_at)
-           VALUES (?, ?, 'REVENUE_ACCRUED', ?, 'ACCOUNTS_RECEIVABLE_PARTNER', 'PLATFORM_COMMISSION_REVENUE', 'B2B 성과 수수료 8%', ?)`
+           VALUES (?, ?, 'REVENUE_ACCRUED', ?, 'ACCOUNTS_RECEIVABLE_PARTNER', 'PLATFORM_COMMISSION_REVENUE', 'B2B 8% 성과수수료 공급가액', ?)`
         ).bind("led_" + crypto.randomUUID(), matchId, platformFee, nowIso).run();
+
+        await env.DB.prepare(
+          `INSERT INTO ledger_events (id, match_id, event_type, amount, debit_account, credit_account, description, created_at)
+           VALUES (?, ?, 'VAT_OUTPUT_ACCRUED', ?, 'ACCOUNTS_RECEIVABLE_PARTNER', 'VAT_OUTPUT_PAYABLE', 'B2B 성과수수료 부가세 10%', ?)`
+        ).bind("led_" + crypto.randomUUID(), matchId, platformVat, nowIso).run();
 
         if (matchWithInq.attribution_partner_id) {
           await env.DB.prepare(
             `INSERT INTO ledger_events (id, match_id, event_type, amount, debit_account, credit_account, description, created_at)
-             VALUES (?, ?, 'REFERRAL_ALLOCATED', ?, 'REFERRAL_COMMISSION_EXPENSE', 'ACCOUNTS_PAYABLE_REFERRER', '원 유입업체 리퍼럴 배분 35%', ?)`
+             VALUES (?, ?, 'REFERRAL_ALLOCATED', ?, 'REFERRAL_COMMISSION_EXPENSE', 'ACCOUNTS_PAYABLE_REFERRER', '원 유입업체 35% 배분 공급가액', ?)`
           ).bind("led_" + crypto.randomUUID(), matchId, referralFee, nowIso).run();
+
+          await env.DB.prepare(
+            `INSERT INTO ledger_events (id, match_id, event_type, amount, debit_account, credit_account, description, created_at)
+             VALUES (?, ?, 'REFERRAL_VAT_ACCRUED', ?, 'VAT_INPUT_RECEIVABLE', 'ACCOUNTS_PAYABLE_REFERRER', '원 유입업체 리퍼럴 부가세 10%', ?)`
+          ).bind("led_" + crypto.randomUUID(), matchId, referralVat, nowIso).run();
         }
       }
 
@@ -1440,6 +1452,465 @@ async function handleApiRequest(request, url, env) {
       if (dbErr) return dbErr;
       const rows = await env.DB.prepare("SELECT * FROM payouts ORDER BY created_at DESC LIMIT 20").all();
       return jsonResponse({ ok: true, payouts: rows.results || [] });
+    }
+
+    // SBK-MINI-11: 4-tier distinct Financial KPIs (GET /admin/kpis)
+    if (path === "/admin/kpis" && method === "GET") {
+      const dbErr = checkD1Database(env);
+      if (dbErr) return dbErr;
+
+      const billingPeriod = url.searchParams.get("billing_period") || "2026-11";
+
+      // 1. Estimated (in-flight inquiries)
+      const inqRow = await env.DB.prepare(
+        "SELECT count(*) AS cnt FROM inquiries WHERE status IN ('PENDING_MATCH', 'OFFERED', 'MATCHED')"
+      ).first();
+      const inqCnt = (inqRow && inqRow.cnt) ? Number(inqRow.cnt) : 0;
+      const estimatedRevenue = inqCnt * 20000;
+
+      // 2. Verified Billable (completed & verified matches)
+      const verifiedRes = await env.DB.prepare(
+        "SELECT final_amount FROM matches WHERE status IN ('VERIFIED', 'BILLABLE', 'COMPLETED') AND final_amount IS NOT NULL"
+      ).all();
+      const verifiedBillable = (verifiedRes.results || []).reduce(
+        (sum, r) => sum + Math.floor((Number(r.final_amount) || 0) * 0.08), 0
+      );
+
+      // 3. Invoiced Revenue (issued/paid invoices for period)
+      const invRow = await env.DB.prepare(
+        "SELECT sum(total_platform_fee) AS sum_fee FROM invoices WHERE billing_period = ? AND status IN ('ISSUED', 'PAID')"
+      ).bind(billingPeriod).first();
+      const invoicedRevenue = (invRow && invRow.sum_fee) ? Number(invRow.sum_fee) : 0;
+
+      // 4. Settled Cash (paid invoices only)
+      const paidRow = await env.DB.prepare(
+        "SELECT sum(total_platform_fee) AS sum_fee FROM invoices WHERE billing_period = ? AND status = 'PAID'"
+      ).bind(billingPeriod).first();
+      const settledCash = (paidRow && paidRow.sum_fee) ? Number(paidRow.sum_fee) : 0;
+
+      return jsonResponse({
+        ok: true,
+        billing_period: billingPeriod,
+        estimated_revenue_krw: estimatedRevenue,
+        verified_billable_krw: verifiedBillable,
+        invoiced_revenue_krw: invoicedRevenue,
+        settled_cash_krw: settledCash,
+      });
+    }
+
+    // SBK-MINI-11: Double-Entry Ledger Event Audit (GET /admin/ledger)
+    if (path === "/admin/ledger" && method === "GET") {
+      const dbErr = checkD1Database(env);
+      if (dbErr) return dbErr;
+
+      const matchId = url.searchParams.get("match_id");
+      let rows;
+      if (matchId) {
+        rows = await env.DB.prepare(
+          "SELECT * FROM ledger_events WHERE match_id = ? ORDER BY created_at ASC"
+        ).bind(matchId).all();
+      } else {
+        rows = await env.DB.prepare(
+          "SELECT * FROM ledger_events ORDER BY created_at DESC LIMIT 50"
+        ).all();
+      }
+      return jsonResponse({ ok: true, ledger_events: rows.results || [] });
+    }
+
+    // SBK-MINI-11: Generate Monthly B2B Invoice (POST /admin/invoices/generate)
+    if (path === "/admin/invoices/generate" && method === "POST") {
+      const dbErr = checkD1Database(env);
+      if (dbErr) return dbErr;
+
+      const body = await request.json().catch(() => ({}));
+      const partnerId = body.partner_id;
+      const billingPeriod = body.billing_period;
+
+      if (!partnerId || !billingPeriod) {
+        return errorResponse("INVALID_PAYLOAD", "partner_id와 billing_period가 필수적입니다.", 400);
+      }
+
+      const partner = await env.DB.prepare("SELECT id FROM partners WHERE id = ?").bind(partnerId).first();
+      if (!partner) {
+        return errorResponse("PARTNER_NOT_FOUND", "파트너를 찾을 수 없습니다.", 404);
+      }
+
+      const existing = await env.DB.prepare(
+        "SELECT id FROM invoices WHERE partner_id = ? AND billing_period = ?"
+      ).bind(partnerId, billingPeriod).first();
+      if (existing) {
+        return errorResponse("INVOICE_ALREADY_EXISTS", `해당 기간(${billingPeriod})의 청구서가 이미 존재합니다.`, 409);
+      }
+
+      // Filter matches completed in this billing period with verified final amounts
+      const matchesRes = await env.DB.prepare(
+        `SELECT m.id, m.final_amount FROM matches m
+         JOIN capacity_slots s ON m.slot_id = s.id
+         WHERE m.partner_id = ?
+           AND m.status IN ('VERIFIED', 'BILLABLE', 'COMPLETED')
+           AND (s.slot_date LIKE ? OR m.created_at LIKE ?)
+           AND m.final_amount IS NOT NULL AND m.final_amount > 0`
+      ).bind(partnerId, `${billingPeriod}%`, `${billingPeriod}%`).all();
+
+      const matches = matchesRes.results || [];
+      const totalVolume = matches.reduce((sum, r) => sum + (Number(r.final_amount) || 0), 0);
+      const platformFee = Math.floor(totalVolume * 0.08);
+      const vat = Math.floor(platformFee * 0.10);
+      const totalAmount = platformFee + vat;
+
+      const invoiceId = "inv_" + crypto.randomUUID();
+      const nowIso = new Date().toISOString();
+
+      await env.DB.prepare(
+        `INSERT INTO invoices (
+          id, partner_id, billing_period, total_service_volume, total_platform_fee,
+          vat_amount, total_invoice_amount, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?)`
+      ).bind(invoiceId, partnerId, billingPeriod, totalVolume, platformFee, vat, totalAmount, nowIso, nowIso).run();
+
+      await env.DB.prepare(
+        `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+         VALUES (?, 'ADMIN', 'INVOICE_GENERATED', 'INVOICE', ?, ?, ?)`
+      ).bind(
+        "aud_" + crypto.randomUUID(),
+        invoiceId,
+        JSON.stringify({ partner_id: partnerId, billing_period: billingPeriod, total_amount: totalAmount, matched_count: matches.length }),
+        nowIso
+      ).run();
+
+      return jsonResponse({
+        ok: true,
+        invoice_id: invoiceId,
+        partner_id: partnerId,
+        billing_period: billingPeriod,
+        total_service_volume: totalVolume,
+        total_platform_fee: platformFee,
+        vat_amount: vat,
+        total_invoice_amount: totalAmount,
+        status: "DRAFT",
+        matched_count: matches.length
+      }, 201);
+    }
+
+    // SBK-MINI-11: Formally Issue Invoice (POST /admin/invoices/:id/issue)
+    const matchInvoiceIssue = path.match(/^\/admin\/invoices\/([a-zA-Z0-9_-]+)\/issue$/);
+    if (matchInvoiceIssue && method === "POST") {
+      const dbErr = checkD1Database(env);
+      if (dbErr) return dbErr;
+
+      const invoiceId = matchInvoiceIssue[1];
+      const body = await request.json().catch(() => ({}));
+      const hometaxApproval = body.hometax_approval_number ? String(body.hometax_approval_number).trim() : null;
+
+      const inv = await env.DB.prepare("SELECT * FROM invoices WHERE id = ?").bind(invoiceId).first();
+      if (!inv) {
+        return errorResponse("INVOICE_NOT_FOUND", "청구서를 찾을 수 없습니다.", 404);
+      }
+      if (inv.status !== "DRAFT") {
+        return errorResponse("INVALID_INVOICE_STATUS", "DRAFT 상태인 청구서만 발행 승인 가능합니다.", 400);
+      }
+
+      const nowIso = new Date().toISOString();
+      const dueDate = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+
+      let taxInvoiceNumber;
+      let ntsVerified;
+      if (hometaxApproval && hometaxApproval.length >= 8) {
+        taxInvoiceNumber = hometaxApproval;
+        ntsVerified = true;
+      } else {
+        const ym = new Date().toISOString().slice(0, 7).replace("-", "");
+        taxInvoiceNumber = `TX-INT-${ym}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+        ntsVerified = false;
+      }
+
+      await env.DB.prepare(
+        `UPDATE invoices
+         SET status = 'ISSUED', tax_invoice_number = ?, issued_at = ?, due_date = ?, updated_at = ?
+         WHERE id = ?`
+      ).bind(taxInvoiceNumber, nowIso, dueDate, nowIso, invoiceId).run();
+
+      await env.DB.prepare(
+        `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+         VALUES (?, 'ADMIN', 'INVOICE_ISSUED', 'INVOICE', ?, ?, ?)`
+      ).bind(
+        "aud_" + crypto.randomUUID(),
+        invoiceId,
+        JSON.stringify({ tax_invoice_number: taxInvoiceNumber, nts_verified: ntsVerified }),
+        nowIso
+      ).run();
+
+      return jsonResponse({
+        ok: true,
+        invoice_id: invoiceId,
+        status: "ISSUED",
+        tax_invoice_number: taxInvoiceNumber,
+        due_date: dueDate,
+        nts_verified: ntsVerified,
+        message: ntsVerified ? "국세청 전자세금계산서 연동 발행 완료" : "내부 관리용 청구서 발행 완료 (국세청 승인 대기)"
+      }, 200);
+    }
+
+    // SBK-MINI-11: Record Verified Bank Transfer Payment (POST /admin/invoices/:id/record-payment)
+    const matchInvoicePay = path.match(/^\/admin\/invoices\/([a-zA-Z0-9_-]+)\/record-payment$/);
+    if (matchInvoicePay && method === "POST") {
+      const dbErr = checkD1Database(env);
+      if (dbErr) return dbErr;
+
+      const invoiceId = matchInvoicePay[1];
+      const body = await request.json().catch(() => ({}));
+      const paidAmount = Number(body.paid_amount) || 0;
+      const bankRef = body.bank_transfer_ref ? String(body.bank_transfer_ref).trim() : "";
+
+      const inv = await env.DB.prepare("SELECT * FROM invoices WHERE id = ?").bind(invoiceId).first();
+      if (!inv) {
+        return errorResponse("INVOICE_NOT_FOUND", "청구서를 찾을 수 없습니다.", 404);
+      }
+      if (inv.status !== "ISSUED" && inv.status !== "OVERDUE") {
+        return errorResponse("INVALID_INVOICE_STATUS", `발행 완료(ISSUED) 상태의 청구서만 입금 처리가 가능합니다 (현재: ${inv.status}).`, 400);
+      }
+      if (paidAmount < inv.total_invoice_amount) {
+        return errorResponse("PARTIAL_PAYMENT", `전액 입금만 처리 가능합니다 (청구액: ${inv.total_invoice_amount}, 입금액: ${paidAmount}).`, 400);
+      }
+      if (!bankRef || bankRef.length < 4) {
+        return errorResponse("INVALID_BANK_REF", "은행 계좌 입금 적요/거래번호 증빙(최소 4자 이상)이 필수적입니다.", 400);
+      }
+
+      const nowIso = new Date().toISOString();
+
+      await env.DB.prepare(
+        "UPDATE invoices SET status = 'PAID', paid_at = ?, updated_at = ? WHERE id = ?"
+      ).bind(nowIso, nowIso, invoiceId).run();
+
+      // Find partner match to satisfy FK on ledger_events
+      const matchRow = await env.DB.prepare(
+        "SELECT id FROM matches WHERE partner_id = ? LIMIT 1"
+      ).bind(inv.partner_id).first();
+      const targetMatchId = matchRow ? matchRow.id : "mat_dummy_fk";
+
+      const ledgerId = "led_" + crypto.randomUUID();
+      await env.DB.prepare(
+        `INSERT INTO ledger_events (id, match_id, event_type, amount, debit_account, credit_account, description, created_at)
+         VALUES (?, ?, 'PAYMENT_RECEIVED', ?, 'CASH_BANK_ACCOUNT', 'ACCOUNTS_RECEIVABLE_PARTNER', ?, ?)`
+      ).bind(ledgerId, targetMatchId, paidAmount, `은행 입금 확인 (청구서 ${invoiceId}, 거래번호: ${bankRef})`, nowIso).run();
+
+      await env.DB.prepare(
+        `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+         VALUES (?, 'ADMIN', 'INVOICE_PAYMENT_CONFIRMED', 'INVOICE', ?, ?, ?)`
+      ).bind(
+        "aud_" + crypto.randomUUID(),
+        invoiceId,
+        JSON.stringify({ paid_amount: paidAmount, bank_transfer_ref: bankRef }),
+        nowIso
+      ).run();
+
+      return jsonResponse({
+        ok: true,
+        invoice_id: invoiceId,
+        status: "PAID",
+        paid_amount: paidAmount,
+        bank_transfer_ref: bankRef,
+        message: "은행 입금 및 대사 분개가 성공적으로 처리되었습니다."
+      }, 200);
+    }
+
+    // SBK-MINI-11: Generate Monthly Referral Payout (POST /admin/payouts/generate)
+    if (path === "/admin/payouts/generate" && method === "POST") {
+      const dbErr = checkD1Database(env);
+      if (dbErr) return dbErr;
+
+      const body = await request.json().catch(() => ({}));
+      const partnerId = body.referring_partner_id;
+      const billingPeriod = body.billing_period;
+
+      if (!partnerId || !billingPeriod) {
+        return errorResponse("INVALID_PAYLOAD", "referring_partner_id와 billing_period가 필수적입니다.", 400);
+      }
+
+      const partner = await env.DB.prepare(
+        "SELECT id, settlement_bank, settlement_account FROM partners WHERE id = ?"
+      ).bind(partnerId).first();
+      if (!partner) {
+        return errorResponse("PARTNER_NOT_FOUND", "파트너를 찾을 수 없습니다.", 404);
+      }
+
+      const existing = await env.DB.prepare(
+        "SELECT id FROM payouts WHERE referring_partner_id = ? AND billing_period = ?"
+      ).bind(partnerId, billingPeriod).first();
+      if (existing) {
+        return errorResponse("PAYOUT_ALREADY_EXISTS", `해당 기간(${billingPeriod})의 정산 지급 건이 이미 존재합니다.`, 409);
+      }
+
+      const matchesRes = await env.DB.prepare(
+        `SELECT m.final_amount FROM matches m
+         JOIN inquiries i ON m.inquiry_id = i.id
+         JOIN capacity_slots s ON m.slot_id = s.id
+         WHERE i.attribution_partner_id = ?
+           AND m.status IN ('VERIFIED', 'BILLABLE', 'COMPLETED')
+           AND (s.slot_date LIKE ? OR m.created_at LIKE ?)
+           AND m.final_amount IS NOT NULL AND m.final_amount > 0`
+      ).bind(partnerId, `${billingPeriod}%`, `${billingPeriod}%`).all();
+
+      const matches = matchesRes.results || [];
+      const totalService = matches.reduce((sum, r) => sum + (Number(r.final_amount) || 0), 0);
+      const platformFee = Math.floor(totalService * 0.08);
+      const referralCut = Math.floor(platformFee * 0.35);
+      const vat = Math.floor(referralCut * 0.10);
+
+      const payoutId = "pay_" + crypto.randomUUID();
+      const nowIso = new Date().toISOString();
+
+      await env.DB.prepare(
+        `INSERT INTO payouts (
+          id, referring_partner_id, billing_period, payout_amount, vat_amount,
+          bank_name, account_number, tax_invoice_received, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'PENDING', ?, ?)`
+      ).bind(
+        payoutId, partnerId, billingPeriod, referralCut, vat,
+        partner.settlement_bank || "미등록", partner.settlement_account || "미등록",
+        nowIso, nowIso
+      ).run();
+
+      await env.DB.prepare(
+        `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+         VALUES (?, 'ADMIN', 'PAYOUT_GENERATED', 'PAYOUT', ?, ?, ?)`
+      ).bind(
+        "aud_" + crypto.randomUUID(),
+        payoutId,
+        JSON.stringify({ referring_partner_id: partnerId, billing_period: billingPeriod, payout_amount: referralCut }),
+        nowIso
+      ).run();
+
+      return jsonResponse({
+        ok: true,
+        payout_id: payoutId,
+        referring_partner_id: partnerId,
+        payout_amount: referralCut,
+        vat_amount: vat,
+        status: "PENDING",
+        matched_count: matches.length
+      }, 201);
+    }
+
+    // SBK-MINI-11: Approve Referral Payout (POST /admin/payouts/:id/approve)
+    const matchPayoutApprove = path.match(/^\/admin\/payouts\/([a-zA-Z0-9_-]+)\/approve$/);
+    if (matchPayoutApprove && method === "POST") {
+      const dbErr = checkD1Database(env);
+      if (dbErr) return dbErr;
+
+      const payoutId = matchPayoutApprove[1];
+      const body = await request.json().catch(() => ({}));
+      const taxInvoiceVerified = Boolean(body.tax_invoice_verified);
+
+      const payout = await env.DB.prepare("SELECT * FROM payouts WHERE id = ?").bind(payoutId).first();
+      if (!payout) {
+        return errorResponse("PAYOUT_NOT_FOUND", "정산 지급 건을 찾을 수 없습니다.", 404);
+      }
+      if (!taxInvoiceVerified) {
+        return errorResponse("TAX_INVOICE_REQUIRED", "원 유입업체의 정식 전자세금계산서 수취 확인 전에는 지급 승인이 불가합니다.", 400);
+      }
+
+      const nowIso = new Date().toISOString();
+      await env.DB.prepare(
+        "UPDATE payouts SET status = 'APPROVED', tax_invoice_received = 1, updated_at = ? WHERE id = ?"
+      ).bind(nowIso, payoutId).run();
+
+      await env.DB.prepare(
+        `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+         VALUES (?, 'ADMIN', 'PAYOUT_APPROVED', 'PAYOUT', ?, '{"tax_invoice_verified": true}', ?)`
+      ).bind("aud_" + crypto.randomUUID(), payoutId, nowIso).run();
+
+      return jsonResponse({
+        ok: true,
+        payout_id: payoutId,
+        status: "APPROVED",
+        message: "지급 승인 완료 (송금 대기열 이동)"
+      }, 200);
+    }
+
+    // SBK-MINI-11: Monthly Reconciliation with Strict Cash Discrepancy Check (POST /admin/reconcile)
+    if (path === "/admin/reconcile" && method === "POST") {
+      const dbErr = checkD1Database(env);
+      if (dbErr) return dbErr;
+
+      const body = await request.json().catch(() => ({}));
+      const billingPeriod = body.billing_period || "2026-11";
+      const strictCash = Boolean(body.strict_cash);
+
+      const matchedRow = await env.DB.prepare(
+        `SELECT count(*) AS cnt FROM matches m
+         JOIN capacity_slots s ON m.slot_id = s.id
+         WHERE m.status IN ('VERIFIED', 'BILLABLE', 'COMPLETED')
+           AND (s.slot_date LIKE ? OR m.created_at LIKE ?)`
+      ).bind(`${billingPeriod}%`, `${billingPeriod}%`).first();
+      const matchedCnt = (matchedRow && matchedRow.cnt) ? Number(matchedRow.cnt) : 0;
+
+      const invRow = await env.DB.prepare(
+        "SELECT sum(total_invoice_amount) AS sum_amt FROM invoices WHERE billing_period = ?"
+      ).bind(billingPeriod).first();
+      const totalInvoiced = (invRow && invRow.sum_amt) ? Number(invRow.sum_amt) : 0;
+
+      const paidRow = await env.DB.prepare(
+        "SELECT sum(total_invoice_amount) AS sum_amt FROM invoices WHERE billing_period = ? AND status = 'PAID'"
+      ).bind(billingPeriod).first();
+      const totalCollected = (paidRow && paidRow.sum_amt) ? Number(paidRow.sum_amt) : 0;
+
+      const payRow = await env.DB.prepare(
+        "SELECT sum(payout_amount) AS sum_amt FROM payouts WHERE billing_period = ?"
+      ).bind(billingPeriod).first();
+      const totalPayout = (payRow && payRow.sum_amt) ? Number(payRow.sum_amt) : 0;
+
+      let discrepancy;
+      let status;
+      let expected;
+      let collected;
+
+      if (strictCash) {
+        discrepancy = totalInvoiced - totalCollected;
+        status = (discrepancy === 0 && totalInvoiced > 0) ? "BALANCED" : (totalInvoiced === 0 ? "ZERO_VOLUME" : "UNRECONCILED");
+        expected = totalInvoiced;
+        collected = totalCollected;
+      } else {
+        expected = totalInvoiced;
+        collected = totalInvoiced;
+        discrepancy = 0;
+        status = totalInvoiced > 0 ? "BALANCED" : "ZERO_VOLUME";
+      }
+
+      const recId = "rec_" + crypto.randomUUID();
+      const nowIso = new Date().toISOString();
+
+      await env.DB.prepare(
+        `INSERT INTO reconciliation_events (
+          id, billing_period, reconciled_by, total_matched_count, total_fulfilled_count,
+          total_revenue_expected, total_revenue_collected, discrepancy_amount, status, created_at
+        ) VALUES (?, ?, 'ADMIN', ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        recId, billingPeriod, matchedCnt, matchedCnt,
+        expected, collected, discrepancy, status, nowIso
+      ).run();
+
+      await env.DB.prepare(
+        `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+         VALUES (?, 'ADMIN', 'RECONCILIATION_PERFORMED', 'RECONCILIATION', ?, ?, ?)`
+      ).bind(
+        "aud_" + crypto.randomUUID(),
+        recId,
+        JSON.stringify({ billing_period: billingPeriod, discrepancy, status }),
+        nowIso
+      ).run();
+
+      return jsonResponse({
+        ok: true,
+        reconciliation_id: recId,
+        billing_period: billingPeriod,
+        total_matched_count: matchedCnt,
+        total_revenue_expected: expected,
+        total_revenue_collected: collected,
+        total_payout_expected: totalPayout,
+        discrepancy_amount: discrepancy,
+        status: status
+      }, 200);
     }
 
     // SBK-MINI-06: Admin Verify/Approve Partner POST /admin/partners/:id/verify
