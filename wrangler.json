@@ -1,7 +1,15 @@
 {
   "name": "saas-benchmarks",
+  "main": "src/worker.js",
   "compatibility_date": "2026-10-30",
   "assets": {
     "directory": "."
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "slotbridge-kr-d1",
+      "database_id": "slotbridge-kr-d1-local"
+    }
+  ]
 }

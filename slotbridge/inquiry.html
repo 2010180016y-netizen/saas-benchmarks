@@ -311,8 +311,8 @@
       document.getElementById('attribution_partner_id').value = params.get('ref');
     }
 
-    // 6. Form Submission
-    document.getElementById('inquiry-form').addEventListener('submit', function(e) {
+    // 6. Form Submission (SBK-FIX-02: Real API Integration with Demo Fallback)
+    document.getElementById('inquiry-form').addEventListener('submit', async function(e) {
       e.preventDefault();
       const col = document.getElementById('agreed_privacy_collection').checked;
       const share = document.getElementById('agreed_third_party_share').checked;
@@ -327,10 +327,45 @@
         return;
       }
 
-      // SBK-FIX-01: Honest Demo Isolation
-      alert('[파일럿 시연 안내]\n현재 관악·동작구 정식 파트너십 체결 준비(데모) 단계입니다.\n실제 청소 오더 접수 API 연결(FIX-02) 전까지는 시연용 화면으로 작동하며, 입력하신 정보는 실제 청소팀에 전송되지 않습니다.');
+      const submitBtn = document.querySelector('.btn-submit');
+      submitBtn.disabled = true;
+      submitBtn.textContent = '신청 접수 중...';
+
+      const payload = {
+        customer_name: document.getElementById('customer_name').value.trim(),
+        customer_phone: phone,
+        district: document.getElementById('district').value,
+        neighborhood: document.getElementById('neighborhood').value,
+        housing_type: document.querySelector('input[name="housing_type"]:checked') ? document.querySelector('input[name="housing_type"]:checked').value : 'STUDIO',
+        area_pyeong: document.getElementById('area_pyeong').value,
+        requested_date: document.getElementById('requested_date').value,
+        requested_time_window: 'MORNING',
+        agreed_privacy_collection: col,
+        agreed_third_party_share: share,
+        agreed_marketing: document.getElementById('agreed_marketing').checked,
+        attribution_partner_id: document.getElementById('attribution_partner_id').value || null
+      };
+
+      try {
+        const res = await fetch('/api/v1/slotbridge/inquiries', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok && data.status_token) {
+          window.location.href = `status.html?token=${data.status_token}&date=${encodeURIComponent(payload.requested_date)}&dist=${encodeURIComponent(payload.district)}`;
+          return;
+        } else {
+          alert('신청 접수 안내: ' + (data.error?.message || '데모 모드로 전환합니다.'));
+        }
+      } catch (err) {
+        console.warn('API fetch offline, falling back to honest demo:', err);
+      }
+
+      // Honest Demo Fallback
       const mockToken = 'DEMO_' + Math.random().toString(36).substring(2, 10).toUpperCase();
-      window.location.href = `status.html?demo=true&token=${mockToken}&date=${document.getElementById('requested_date').value}&dist=${document.getElementById('district').value}`;
+      window.location.href = `status.html?demo=true&token=${mockToken}&date=${encodeURIComponent(payload.requested_date)}&dist=${encodeURIComponent(payload.district)}`;
     });
   </script>
 </body>

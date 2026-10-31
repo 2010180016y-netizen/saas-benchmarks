@@ -233,7 +233,7 @@
   </div>
 
   <script>
-    document.getElementById('partner-apply-form').addEventListener('submit', function(e) {
+    document.getElementById('partner-apply-form').addEventListener('submit', async function(e) {
       e.preventDefault();
       const name = document.getElementById('name').value.trim();
       const bizNum = document.getElementById('business_number').value.replace(/[^0-9]/g, '');
@@ -241,6 +241,7 @@
       const rep = document.getElementById('representative_name').value.trim();
       const agreed = document.getElementById('agree_terms').checked;
       const resEl = document.getElementById('result-msg');
+      const submitBtn = document.querySelector('.btn-submit');
 
       if (!agreed) {
         alert('B2B 규약에 동의하셔야 신청이 가능합니다.');
@@ -251,12 +252,47 @@
         return;
       }
 
-      // SBK-FIX-01: Honest Demo Isolation
+      submitBtn.disabled = true;
+      submitBtn.textContent = '제휴 신청서 전송 중...';
+
+      const payload = {
+        name,
+        business_number: bizNum,
+        contact_phone: phone,
+        representative_name: rep,
+        partner_type: document.querySelector('input[name="partner_type"]:checked') ? document.querySelector('input[name="partner_type"]:checked').value : 'FULFILLMENT',
+        district: document.getElementById('district').value,
+        liability_insurance_policy_number: document.getElementById('insurance_policy').value.trim()
+      };
+
+      try {
+        const res = await fetch('/api/v1/slotbridge/partners/apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok && data.partner_id) {
+          resEl.style.display = 'block';
+          resEl.style.background = 'rgba(16, 185, 129, 0.15)';
+          resEl.style.border = '1px solid #10b981';
+          resEl.style.color = '#34d399';
+          resEl.innerHTML = `<strong>파트너 제휴 신청이 D1에 정상 접수되었습니다!</strong><br>[${name}]님의 신청 ID: <code>${data.partner_id}</code><br>상태: <code>PENDING_APPROVAL</code> (관리자 서류 심사 대기 중)<br>영업일 기준 24시간 이내 대표 번호로 심사 결과를 안내드립니다.`;
+          submitBtn.textContent = '접수 완료됨';
+          return;
+        }
+      } catch (err) {
+        console.warn('API fetch offline, using fallback notice:', err);
+      }
+
+      // Fallback Demo Notice
       resEl.style.display = 'block';
       resEl.style.background = 'rgba(245, 158, 11, 0.15)';
       resEl.style.border = '1px solid #f59e0b';
       resEl.style.color = '#fbbf24';
-      resEl.innerHTML = `<strong>[사전 접수 의향 확인 — 데모 모드]</strong><br>[${name}] 대표님의 파트너십 참여 의향이 확인되었습니다.<br>현재 온라인 자동 저장 API 연동(FIX-02) 전이므로 본 제출은 서버 DB에 저장되지 않았습니다.<br>실제 파트너 제휴 및 슬롯 등록은 담당자(010-4005-3071) 유선 상담을 통해 정식 체결됩니다.`;
+      resEl.innerHTML = `<strong>[사전 접수 의향 확인 — 시연 모드]</strong><br>[${name}] 대표님의 파트너십 참여 의향이 확인되었습니다.<br>현재 온라인 자동 저장 API 준비 중이므로 본 제출은 서버 DB에 저장되지 않았습니다.<br>실제 파트너 제휴 및 슬롯 등록은 담당자(010-4005-3071) 유선 상담을 통해 정식 체결됩니다.`;
+      submitBtn.disabled = false;
+      submitBtn.textContent = '파트너 제휴 신청서 제출하기';
     });
   </script>
 </body>

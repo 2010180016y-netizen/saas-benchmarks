@@ -143,8 +143,8 @@
 
   <script>
     const params = new URLSearchParams(window.location.search);
-    const token = params.get('token') || 'cst_' + Math.random().toString(36).substring(2, 10);
-    document.getElementById('disp-token').textContent = token.substring(0, 12) + '...';
+    const token = params.get('token') || 'DEMO_' + Math.random().toString(36).substring(2, 10).toUpperCase();
+    document.getElementById('disp-token').textContent = token.substring(0, 16) + '...';
     if (params.get('date')) {
       document.getElementById('disp-date').textContent = params.get('date');
     }
@@ -152,8 +152,45 @@
       document.getElementById('disp-area').textContent = '서울 ' + params.get('dist');
     }
 
-    function executeRevocation() {
-      if (confirm("정말 신청 취소 플로우를 시연하시겠습니까? (데모 모드)")) {
+    // SBK-FIX-02: Load Real Status from API if available
+    async function loadStatus() {
+      if (token.startsWith('DEMO_')) return;
+      try {
+        const res = await fetch('/api/v1/slotbridge/inquiries/' + token);
+        if (res.ok) {
+          const data = await res.json();
+          document.getElementById('badge-status').textContent = '실시간 D1 연동됨 (' + data.status + ')';
+          document.getElementById('badge-status').style.background = 'rgba(16, 185, 129, 0.15)';
+          document.getElementById('badge-status').style.color = '#34d399';
+          document.getElementById('badge-status').style.borderColor = 'rgba(16, 185, 129, 0.3)';
+          document.getElementById('disp-match').textContent = data.status === 'SUBMITTED' ? '관내 1순위 청소팀 배정 진행 중' : data.status;
+          document.getElementById('disp-match').style.color = '#34d399';
+        }
+      } catch (err) {
+        console.warn('API fetch offline, using URL params');
+      }
+    }
+    loadStatus();
+
+    async function executeRevocation() {
+      if (confirm("정말 신청을 취소하고 개인정보를 즉시 영구 파기하시겠습니까?")) {
+        try {
+          const res = await fetch('/api/v1/slotbridge/inquiries/' + token, { method: 'DELETE' });
+          if (res.ok) {
+            document.getElementById('main-card').style.display = 'none';
+            document.getElementById('badge-status').textContent = '신청 취소됨 (개인정보 D1 영구 파기 완료)';
+            document.getElementById('badge-status').style.background = 'rgba(239, 68, 68, 0.15)';
+            document.getElementById('badge-status').style.color = '#f87171';
+            document.getElementById('badge-status').style.borderColor = 'rgba(239, 68, 68, 0.3)';
+            document.getElementById('erased-banner').innerHTML = '<strong>🗑️ 개인정보 완전 파기 완료 (D1 Tombstone)</strong><br>고객님의 요청에 따라 데이터베이스에서 성명, 연락처가 난수로 덮어쓰여 영구 삭제되었습니다.';
+            document.getElementById('erased-banner').style.display = 'block';
+            return;
+          }
+        } catch (err) {
+          console.warn('API delete offline, fallback to demo notice');
+        }
+
+        // Demo fallback
         document.getElementById('main-card').style.display = 'none';
         document.getElementById('badge-status').textContent = '데모 취소 완료 (실제 데이터 없음)';
         document.getElementById('badge-status').style.background = 'rgba(239, 68, 68, 0.15)';
