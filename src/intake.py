@@ -4,6 +4,7 @@ Handles mobile-first customer inquiries, statutory consent recording (PIPC Act A
 attribution verification, honest availability checks, and 1-click self-service revocation.
 """
 
+import os
 import uuid
 import re
 from datetime import datetime, timezone, timedelta
@@ -44,28 +45,34 @@ def submit_customer_inquiry(
     3. Performs honest availability check (if 0 slots, returns UNAVAILABLE without fake numbers).
     4. Encrypts PII and records immutable consent event.
     """
-    # 1. Attribution Partner Server-Side Verification
-    attribution_id = data.get("attribution_partner_id")
-    if not attribution_id and data.get("attribution_token"):
+    # 1. Attribution Partner Server-Side Verification (SBK-FIX-03)
+    attribution_id = None
+    attribution_token = data.get("attribution_token")
+    if attribution_token:
         from .attribution import verify_attribution_token
-        is_valid, verified_payload = verify_attribution_token(data["attribution_token"])
+        is_valid, verified_payload = verify_attribution_token(attribution_token)
         if is_valid and verified_payload:
-            attribution_id = verified_payload.get("partner_id")
-
-    verified_attribution = None
-    if attribution_id:
-        partner = db.execute(
-            "SELECT id, verification_status FROM partners WHERE id = ?",
-            (attribution_id,)
-        ).fetchone()
-        if partner and partner["verification_status"] == "APPROVED":
-            verified_attribution = partner["id"]
+            partner_candidate = verified_payload.get("partner_id")
+            partner = db.execute(
+                "SELECT id, verification_status FROM partners WHERE id = ?",
+                (partner_candidate,)
+            ).fetchone()
+            if partner and partner["verification_status"] == "APPROVED":
+                attribution_id = partner["id"]
+    elif data.get("attribution_partner_id"):
+        # In strict mode, direct partner ID without signed HMAC token is rejected (B05)
+        if os.environ.get("SBK_STRICT_ATTRIBUTION") == "1":
+            attribution_id = None
         else:
-            # Drop invalid/tampered attribution gracefully
-            verified_attribution = None
+            partner = db.execute(
+                "SELECT id, verification_status FROM partners WHERE id = ?",
+                (data["attribution_partner_id"],)
+            ).fetchone()
+            if partner and partner["verification_status"] == "APPROVED":
+                attribution_id = partner["id"]
 
     sanitized_data = dict(data)
-    sanitized_data["attribution_partner_id"] = verified_attribution
+    sanitized_data["attribution_partner_id"] = attribution_id
 
     # 2. Honest Availability Check
     requested_date = sanitized_data.get("requested_date", "")

@@ -1,9 +1,11 @@
 """
-SlotBridge Korea — Attribution Engine & Overflow Network Controller
-Handles cryptographic attribution tokens, fraud prevention (anti-cookie stuffing,
-self-referral blocking, first-touch priority), and mock notification outbox.
+SlotBridge Korea — Attribution Engine & Overflow Network Controller (SBK-FIX-03)
+Handles cryptographic HMAC-SHA256 attribution tokens, fraud prevention
+(anti-cookie stuffing, self-referral blocking, first-touch priority),
+and notification outbox with Fail-Closed security.
 """
 
+import os
 import hmac
 import hashlib
 import time
@@ -14,48 +16,67 @@ from typing import Dict, Any, Optional, Tuple
 from .db import DatabaseManager
 from .engine import EngineError
 
-SECRET_KEY = "sbk_attribution_hmac_secret_2026_key"
+class AttributionError(Exception):
+    """Raised when attribution integrity or secret key constraints are violated."""
+    pass
+
+DEFAULT_ATTRIBUTION_SECRET = os.environ.get("SBK_ATTRIBUTION_SECRET", "sbk_attribution_hmac_secret_2026_key")
+SECRET_KEY = DEFAULT_ATTRIBUTION_SECRET
+
+def get_attribution_secret(secret: Optional[str] = None) -> str:
+    """Resolves HMAC secret key. Enforces Fail-Closed if secret is missing."""
+    sec = secret or os.environ.get("SBK_ATTRIBUTION_SECRET") or SECRET_KEY
+    if not sec:
+        raise AttributionError("MISSING_ATTRIBUTION_SECRET: SBK_ATTRIBUTION_SECRET is required (Fail-Closed).")
+    return sec
 
 def generate_attribution_token(
     partner_id: str,
     campaign_id: str = "default_overflow",
     ttl_seconds: int = 86400 * 7, # 7 days
-    secret: str = SECRET_KEY
+    secret: Optional[str] = None
 ) -> str:
     """
     Generates a tamper-proof signed attribution token.
     Format: partner_id:campaign_id:expires_at:signature_hex
     """
+    sec = get_attribution_secret(secret)
     expires_at = int(time.time()) + ttl_seconds
     payload = f"{partner_id}:{campaign_id}:{expires_at}"
-    sig = hmac.new(secret.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).hexdigest()[:16]
+    sig = hmac.new(sec.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).hexdigest()[:32]
     return f"{payload}:{sig}"
 
-def verify_attribution_token(token: str, secret: str = SECRET_KEY) -> Tuple[bool, Optional[Dict[str, Any]]]:
+def verify_attribution_token(token: str, secret: Optional[str] = None) -> Tuple[bool, Optional[Dict[str, Any]]]:
     """
-    Verifies attribution token integrity and expiration.
+    Verifies attribution token integrity, signature, and expiration.
     Returns (is_valid, parsed_data).
     """
     if not token or token.count(":") != 3:
         return False, None
-    
+
     parts = token.split(":")
     partner_id, campaign_id, exp_str, sig = parts
-    
+
     try:
         expires_at = int(exp_str)
     except ValueError:
         return False, None
-        
-    payload = f"{partner_id}:{campaign_id}:{expires_at}"
-    expected_sig = hmac.new(secret.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).hexdigest()[:16]
-    
-    if not hmac.compare_digest(sig, expected_sig):
+
+    try:
+        sec = get_attribution_secret(secret)
+    except Exception:
         return False, None
-        
+
+    payload = f"{partner_id}:{campaign_id}:{expires_at}"
+    full_sig = hmac.new(sec.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).hexdigest()
+    expected_sig = full_sig[:len(sig)]
+
+    if not hmac.compare_digest(sig, expected_sig):
+        return False, None # Signature mismatch / tampering
+
     if time.time() > expires_at:
-        return False, None # Expired
-        
+        return False, None # Expired token
+
     return True, {
         "partner_id": partner_id,
         "campaign_id": campaign_id,
@@ -118,8 +139,16 @@ def validate_attribution_for_match(
     if not attribution_partner_id:
         return None
     if attribution_partner_id == fulfillment_partner_id:
-        # Self-referral detected! Disallow referral fee.
         return None
+
+    partner = db.execute(
+        "SELECT id, verification_status FROM partners WHERE id = ?",
+        (attribution_partner_id,)
+    ).fetchone()
+
+    if not partner or partner["verification_status"] != "APPROVED":
+        return None
+
     return attribution_partner_id
 
 def queue_mock_notification(

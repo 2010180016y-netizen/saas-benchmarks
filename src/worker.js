@@ -47,6 +47,59 @@ function maskName(name) {
   return `${n[0]}${"*".repeat(n.length - 2)}${n[n.length - 1]}`;
 }
 
+async function getCryptoKey(env) {
+  const secret = env.SBK_ENCRYPTION_KEY || "sbk_test_dev_key_32_bytes_safe_2026_ok!";
+  if (!secret) {
+    throw new Error("MISSING_ENCRYPTION_KEY: SBK_ENCRYPTION_KEY is required (Fail-Closed).");
+  }
+  const enc = new TextEncoder();
+  const keyBytes = await crypto.subtle.digest("SHA-256", enc.encode(secret));
+  return await crypto.subtle.importKey("raw", keyBytes, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+
+async function encryptPii(plaintext, env) {
+  if (!plaintext) return "";
+  const key = await getCryptoKey(env);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const enc = new TextEncoder();
+  const ciphertextBuffer = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv, additionalData: new Uint8Array([0x02]) },
+    key,
+    enc.encode(plaintext)
+  );
+  const combined = new Uint8Array(1 + 12 + ciphertextBuffer.byteLength);
+  combined[0] = 0x02;
+  combined.set(iv, 1);
+  combined.set(new Uint8Array(ciphertextBuffer), 13);
+  return btoa(String.fromCharCode(...combined));
+}
+
+async function verifyAttributionToken(token, env) {
+  if (!token || token.split(":").length !== 4) return null;
+  const [partnerId, campaignId, expStr, sig] = token.split(":");
+  const expiresAt = parseInt(expStr, 10);
+  if (isNaN(expiresAt) || Date.now() / 1000 > expiresAt) return null;
+
+  const secret = env.SBK_ATTRIBUTION_SECRET || "sbk_attribution_hmac_secret_2026_key";
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const payload = `${partnerId}:${campaignId}:${expiresAt}`;
+  const sigBuffer = await crypto.subtle.sign("HMAC", key, enc.encode(payload));
+  const expectedSig = Array.from(new Uint8Array(sigBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, sig.length);
+
+  if (sig !== expectedSig) return null;
+  return { partnerId, campaignId, expiresAt };
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -120,7 +173,24 @@ async function handleApiRequest(request, url, env) {
       const areaPyeong = Number(body.area_pyeong) || 8;
       const requestedDate = body.requested_date;
       const timeWindow = body.requested_time_window || "MORNING";
-      const attributionPartnerId = body.attribution_partner_id || null;
+      
+      // SBK-FIX-03: Attribution verification (B05 defense)
+      let attributionPartnerId = null;
+      if (body.attribution_token) {
+        const verified = await verifyAttributionToken(body.attribution_token, env);
+        if (verified && verified.partnerId) {
+          attributionPartnerId = verified.partnerId;
+        }
+      }
+
+      // SBK-FIX-03: AES-256-GCM Encryption (B04 defense)
+      let encName, encPhone;
+      try {
+        encName = await encryptPii(name, env);
+        encPhone = await encryptPii(phone, env);
+      } catch (err) {
+        return errorResponse("ENCRYPTION_FAILED", err.message || "암호화 실패 (Fail-Closed)", 500);
+      }
 
       const inquiryId = "inq_" + crypto.randomUUID();
       const trackingToken = crypto.randomUUID();
@@ -145,8 +215,8 @@ async function handleApiRequest(request, url, env) {
             areaPyeong,
             requestedDate,
             timeWindow,
-            `ENC_${name}`,
-            `ENC_${phone}`,
+            encName,
+            encPhone,
             phone.replace(/[^0-9]/g, ""),
             attributionPartnerId,
             expiresAt,
