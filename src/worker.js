@@ -48,9 +48,11 @@ function maskName(name) {
 }
 
 async function getCryptoKey(env) {
-  const secret = env.SBK_ENCRYPTION_KEY || "sbk_test_dev_key_32_bytes_safe_2026_ok!";
-  if (!secret) {
-    throw new Error("MISSING_ENCRYPTION_KEY: SBK_ENCRYPTION_KEY is required (Fail-Closed).");
+  const secret = env.SBK_ENCRYPTION_KEY;
+  if (!secret || typeof secret !== "string" || secret.trim().length === 0) {
+    const err = new Error("MISSING_ENCRYPTION_KEY: SBK_ENCRYPTION_KEY is required in environment bindings (Fail-Closed).");
+    err.status = 503;
+    throw err;
   }
   const enc = new TextEncoder();
   const keyBytes = await crypto.subtle.digest("SHA-256", enc.encode(secret));
@@ -80,7 +82,11 @@ async function verifyAttributionToken(token, env) {
   const expiresAt = parseInt(expStr, 10);
   if (isNaN(expiresAt) || Date.now() / 1000 > expiresAt) return null;
 
-  const secret = env.SBK_ATTRIBUTION_SECRET || "sbk_attribution_hmac_secret_2026_key";
+  const secret = env.SBK_ATTRIBUTION_SECRET;
+  if (!secret || typeof secret !== "string" || secret.trim().length === 0) {
+    // Fail-Closed: Secret missing in environment, reject attribution verification
+    return null;
+  }
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey(
     "raw",
@@ -101,7 +107,12 @@ async function verifyAttributionToken(token, env) {
 }
 
 async function generateAttributionToken(partnerId, campaignId, env, ttlSeconds = 86400 * 7) {
-  const secret = env.SBK_ATTRIBUTION_SECRET || "sbk_attribution_hmac_secret_2026_key";
+  const secret = env.SBK_ATTRIBUTION_SECRET;
+  if (!secret || typeof secret !== "string" || secret.trim().length === 0) {
+    const err = new Error("MISSING_ATTRIBUTION_SECRET: SBK_ATTRIBUTION_SECRET is required in environment bindings (Fail-Closed).");
+    err.status = 503;
+    throw err;
+  }
   const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
   const payload = `${partnerId}:${campaignId}:${expiresAt}`;
   const enc = new TextEncoder();
@@ -196,7 +207,12 @@ async function handleApiRequest(request, url, env) {
       ).bind("camp_" + crypto.randomUUID(), partnerId, campaignId, nowIso, nowIso, nowIso).run().catch(() => {});
     }
 
-    const token = await generateAttributionToken(partnerId, campaignId, env);
+    let token;
+    try {
+      token = await generateAttributionToken(partnerId, campaignId, env);
+    } catch (err) {
+      return errorResponse("SERVER_CONFIG_ERROR", err.message || "토큰 발급 실패 (Fail-Closed)", err.status || 503);
+    }
     return jsonResponse({
       ok: true,
       partner_id: partnerId,
@@ -257,7 +273,7 @@ async function handleApiRequest(request, url, env) {
         encName = await encryptPii(name, env);
         encPhone = await encryptPii(phone, env);
       } catch (err) {
-        return errorResponse("ENCRYPTION_FAILED", err.message || "암호화 실패 (Fail-Closed)", 500);
+        return errorResponse("ENCRYPTION_FAILED", err.message || "암호화 실패 (Fail-Closed)", err.status || 503);
       }
 
       const inquiryId = "inq_" + crypto.randomUUID();
@@ -596,7 +612,11 @@ async function handleApiRequest(request, url, env) {
   // 6. Admin Endpoints (Strictly Protected by X-SBK-Admin-Key)
   if (path.startsWith("/admin/")) {
     const adminKey = request.headers.get("X-SBK-Admin-Key");
-    const expectedKey = env.SBK_ADMIN_KEY || "sbk_admin_secret_dev_2026";
+    const expectedKey = env.SBK_ADMIN_KEY;
+
+    if (!expectedKey || typeof expectedKey !== "string" || expectedKey.trim().length === 0) {
+      return errorResponse("SERVER_CONFIG_ERROR", "관리자 시크릿 키가 환경변수에 설정되지 않았습니다 (Fail-Closed).", 503);
+    }
 
     if (!adminKey || adminKey !== expectedKey) {
       return errorResponse("UNAUTHORIZED", "관리자 인증 키가 유효하지 않습니다. 접근이 거부되었습니다.", 401);
@@ -621,6 +641,16 @@ async function handleApiRequest(request, url, env) {
 
   // 7. Cron Trigger: Process 15-minute offer timeouts & auto-reassignment (B12)
   if (path === "/cron/process-timeouts" && method === "POST") {
+    const adminKey = request.headers.get("X-SBK-Admin-Key");
+    const expectedKey = env.SBK_ADMIN_KEY;
+
+    if (!expectedKey || typeof expectedKey !== "string" || expectedKey.trim().length === 0) {
+      return errorResponse("SERVER_CONFIG_ERROR", "관리자 시크릿 키가 환경변수에 설정되지 않았습니다 (Fail-Closed).", 503);
+    }
+
+    if (!adminKey || adminKey !== expectedKey) {
+      return errorResponse("UNAUTHORIZED", "크론 작업 실행 권한이 없습니다.", 401);
+    }
     if (!env.DB) {
       return jsonResponse({ ok: true, processed_count: 0, message: "D1 not bound (mock)" });
     }
