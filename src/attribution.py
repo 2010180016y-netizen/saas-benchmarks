@@ -25,8 +25,13 @@ SECRET_KEY = DEFAULT_ATTRIBUTION_SECRET
 
 def get_attribution_secret(secret: Optional[str] = None) -> str:
     """Resolves HMAC secret key. Enforces Fail-Closed if secret is missing."""
-    sec = secret or os.environ.get("SBK_ATTRIBUTION_SECRET") or SECRET_KEY
-    if not sec:
+    if secret is not None:
+        sec = secret
+    else:
+        sec = os.environ.get("SBK_ATTRIBUTION_SECRET")
+        if sec is None:
+            sec = SECRET_KEY
+    if not sec or not sec.strip():
         raise AttributionError("MISSING_ATTRIBUTION_SECRET: SBK_ATTRIBUTION_SECRET is required (Fail-Closed).")
     return sec
 
@@ -133,12 +138,26 @@ def validate_attribution_for_match(
 ) -> Optional[str]:
     """
     Enforces anti-fraud rules:
-    Rule: Self-Referral / Wash Trading Block!
+    Rule 1: Self-Referral / Wash Trading Block!
     If referring partner is identical to fulfillment partner, drop referral cut (prevent fee evasion).
+    Rule 2: Partner must be APPROVED.
     """
     if not attribution_partner_id:
         return None
     if attribution_partner_id == fulfillment_partner_id:
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        db.execute(
+            """
+            INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+            VALUES (?, 'SYSTEM', 'SELF_REFERRAL_BLOCKED', 'PARTNER', ?, ?, ?)
+            """,
+            (
+                f"aud_{uuid.uuid4()}", attribution_partner_id,
+                json.dumps({"reason": "유입 파트너와 수행 파트너 동일 (자가 귀속 차단)", "partner_id": attribution_partner_id}, ensure_ascii=False),
+                now_iso
+            )
+        )
+        db.commit()
         return None
 
     partner = db.execute(

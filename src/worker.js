@@ -100,6 +100,26 @@ async function verifyAttributionToken(token, env) {
   return { partnerId, campaignId, expiresAt };
 }
 
+async function generateAttributionToken(partnerId, campaignId, env, ttlSeconds = 86400 * 7) {
+  const secret = env.SBK_ATTRIBUTION_SECRET || "sbk_attribution_hmac_secret_2026_key";
+  const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
+  const payload = `${partnerId}:${campaignId}:${expiresAt}`;
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sigBuffer = await crypto.subtle.sign("HMAC", key, enc.encode(payload));
+  const sig = Array.from(new Uint8Array(sigBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 32);
+  return `${payload}:${sig}`;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -135,6 +155,43 @@ async function handleApiRequest(request, url, env) {
       version: "1.1.0",
       d1_connected: Boolean(env.DB),
       time: new Date().toISOString(),
+    });
+  }
+
+  // 1.1 Attribution Token Issue: GET /attribution/token?partner_id=...
+  if (path === "/attribution/token" && method === "GET") {
+    const partnerId = url.searchParams.get("partner_id");
+    const campaignId = url.searchParams.get("campaign_id") || "overflow_widget";
+
+    if (!partnerId) {
+      return errorResponse("PARTNER_ID_REQUIRED", "partner_id 파라미터가 필요합니다.", 400);
+    }
+
+    if (env.DB) {
+      const partner = await env.DB.prepare(
+        "SELECT id, verification_status FROM partners WHERE id = ?"
+      ).bind(partnerId).first();
+
+      if (!partner || !["APPROVED", "VERIFIED"].includes(partner.verification_status)) {
+        return errorResponse("PARTNER_INACTIVE", "승인된 활성 파트너만 위젯 서명 토큰을 발급받을 수 있습니다.", 403);
+      }
+
+      // Increment click stats
+      const nowIso = new Date().toISOString();
+      await env.DB.prepare(
+        `INSERT INTO campaign_attributions (id, partner_id, campaign_name, clicks_count, conversions_count, created_at, updated_at)
+         VALUES (?, ?, ?, 1, 0, ?, ?)
+         ON CONFLICT(partner_id, campaign_name) DO UPDATE SET clicks_count = clicks_count + 1, updated_at = ?`
+      ).bind("camp_" + crypto.randomUUID(), partnerId, campaignId, nowIso, nowIso, nowIso).run().catch(() => {});
+    }
+
+    const token = await generateAttributionToken(partnerId, campaignId, env);
+    return jsonResponse({
+      ok: true,
+      partner_id: partnerId,
+      campaign_id: campaignId,
+      token,
+      referral_url: `/slotbridge/inquiry.html?ref=${encodeURIComponent(partnerId)}&token=${encodeURIComponent(token)}`
     });
   }
 

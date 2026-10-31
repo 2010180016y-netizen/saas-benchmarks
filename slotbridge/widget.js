@@ -1,8 +1,8 @@
 /**
- * SlotBridge Korea — White-Label Overflow Embed Widget
- * Version: 1.0.0
- * Size: < 6KB (Zero external dependencies)
- * Security: CSP-safe, Clickjacking protected, 3rd-party cookie free.
+ * SlotBridge Korea — White-Label Overflow Embed Widget (SBK-FIX-08)
+ * Version: 2.0.0 (Secure DOM API & Signed Attribution Gateway)
+ * Size: < 5KB (Zero external dependencies)
+ * Security: Strictly safe DOM API (Zero string injection), Zero 3rd-party cookies, Signed HMAC Token.
  */
 
 (function () {
@@ -23,8 +23,8 @@
   // Prevent multiple injections
   if (document.getElementById('sbk-overflow-widget-root')) return;
 
-  var container = document.createElement('div');
-  container.id = 'sbk-overflow-widget-root';
+  var root = document.createElement('div');
+  root.id = 'sbk-overflow-widget-root';
 
   var isDark = theme === 'dark';
   var bgColor = isDark ? '#111827' : '#ffffff';
@@ -35,35 +35,111 @@
   var warningBg = isDark ? 'rgba(245, 158, 11, 0.12)' : '#fef3c7';
   var warningText = isDark ? '#fde68a' : '#92400e';
 
-  container.innerHTML = [
-    '<div style="font-family: -apple-system, BlinkMacSystemFont, Pretendard, Segoe UI, Roboto, sans-serif;',
-    '     background: ' + bgColor + '; color: ' + textColor + '; border: 1px solid ' + borderColor + ';',
-    '     border-radius: 12px; padding: 18px 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.15);',
-    '     max-width: 520px; margin: 16px auto; box-sizing: border-box; text-align: left; line-height: 1.5;">',
-    '  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">',
-    '    <span style="background: ' + warningBg + '; color: ' + warningText + '; font-size: 11px; font-weight: 700;',
-    '                 padding: 3px 8px; border-radius: 4px; letter-spacing: -0.2px;">⚠️ ' + partnerName + ' 예약 마감 안내</span>',
-    '    <span style="font-size: 11px; color: ' + mutedColor + ';">24~72h 급행 지원</span>',
-    '  </div>',
-    '  <h4 style="margin: 0 0 6px 0; font-size: 15px; font-weight: 700; color: ' + textColor + ';">',
-    '    일정이 마감되어 고민이신가요?',
-    '  </h4>',
-    '  <p style="margin: 0 0 14px 0; font-size: 13px; color: ' + mutedColor + ';">',
-    '    ' + targetDistrict + ' 공인 연합 청소팀의 <strong>[24~72시간 잔여 슬롯]</strong>을 조회하여 바로 연결해 드립니다.',
-    '  </p>',
-    '  <a id="sbk-widget-btn" href="' + baseUrl + '/slotbridge/inquiry.html?ref=' + encodeURIComponent(partnerId) + '"',
-    '     target="_blank" rel="noopener noreferrer"',
-    '     style="display: block; width: 100%; text-align: center; background: ' + accentColor + '; color: #ffffff;',
-    '            font-size: 14px; font-weight: 700; padding: 11px 0; border-radius: 8px; text-decoration: none;',
-    '            box-sizing: border-box; transition: background 0.2s;">',
-    '    관내 잔여 급행 슬롯 조회하기 (무료)',
-    '  </a>',
-    '  <div style="margin-top: 10px; font-size: 11px; color: ' + mutedColor + '; text-align: center; line-height: 1.4;">',
-    '    🔒 본 서비스는 <strong>SlotBridge Korea</strong> 공인 연합 네트워크를 통해 정식 공급업체로 1:1 연결됩니다.',
-    '  </div>',
-    '</div>'
-  ].join('');
+  // Card Container
+  var card = document.createElement('div');
+  card.style.fontFamily = '-apple-system, BlinkMacSystemFont, Pretendard, Segoe UI, Roboto, sans-serif';
+  card.style.background = bgColor;
+  card.style.color = textColor;
+  card.style.border = '1px solid ' + borderColor;
+  card.style.borderRadius = '12px';
+  card.style.padding = '18px 20px';
+  card.style.boxShadow = '0 4px 16px rgba(0,0,0,0.15)';
+  card.style.maxWidth = '520px';
+  card.style.margin = '16px auto';
+  card.style.boxSizing = 'border-box';
+  card.style.textAlign = 'left';
+  card.style.lineHeight = '1.5';
 
-  // Insert where script tag is or append to body
-  currentScript.parentNode.insertBefore(container, currentScript.nextSibling);
+  // Header Row
+  var header = document.createElement('div');
+  header.style.display = 'flex';
+  header.style.alignItems = 'center';
+  header.style.justifyContent = 'space-between';
+  header.style.marginBottom = '10px';
+
+  var badge = document.createElement('span');
+  badge.style.background = warningBg;
+  badge.style.color = warningText;
+  badge.style.fontSize = '11px';
+  badge.style.fontWeight = '700';
+  badge.style.padding = '3px 8px';
+  badge.style.borderRadius = '4px';
+  badge.style.letterSpacing = '-0.2px';
+  badge.textContent = '⚠️ ' + partnerName + ' 예약 마감 안내';
+
+  var subBadge = document.createElement('span');
+  subBadge.style.fontSize = '11px';
+  subBadge.style.color = mutedColor;
+  subBadge.textContent = '24~72h 급행 지원';
+
+  header.appendChild(badge);
+  header.appendChild(subBadge);
+  card.appendChild(header);
+
+  // Title
+  var title = document.createElement('h4');
+  title.style.margin = '0 0 6px 0';
+  title.style.fontSize = '15px';
+  title.style.fontWeight = '700';
+  title.style.color = textColor;
+  title.textContent = '일정이 마감되어 고민이신가요?';
+  card.appendChild(title);
+
+  // Description
+  var desc = document.createElement('p');
+  desc.style.margin = '0 0 14px 0';
+  desc.style.fontSize = '13px';
+  desc.style.color = mutedColor;
+  desc.textContent = targetDistrict + ' 공인 연합 청소팀의 [24~72시간 잔여 슬롯]을 조회하여 바로 연결해 드립니다.';
+  card.appendChild(desc);
+
+  // Action Button (Default base URL without signed token)
+  var btn = document.createElement('a');
+  btn.id = 'sbk-widget-btn';
+  btn.target = '_blank';
+  btn.rel = 'noopener noreferrer';
+  btn.style.display = 'block';
+  btn.style.width = '100%';
+  btn.style.textAlign = 'center';
+  btn.style.background = accentColor;
+  btn.style.color = '#ffffff';
+  btn.style.fontSize = '14px';
+  btn.style.fontWeight = '700';
+  btn.style.padding = '11px 0';
+  btn.style.borderRadius = '8px';
+  btn.style.textDecoration = 'none';
+  btn.style.boxSizing = 'border-box';
+  btn.style.transition = 'background 0.2s';
+  btn.textContent = '관내 잔여 급행 슬롯 조회하기 (무료)';
+  btn.href = baseUrl + '/slotbridge/inquiry.html?ref=' + encodeURIComponent(partnerId);
+
+  // Asynchronously request cryptographically signed attribution token from server
+  try {
+    var tokenEndpoint = baseUrl + '/api/v1/slotbridge/attribution/token?partner_id=' + encodeURIComponent(partnerId);
+    fetch(tokenEndpoint)
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (data && data.ok && data.token) {
+          btn.href = baseUrl + '/slotbridge/inquiry.html?ref=' + encodeURIComponent(partnerId) + '&token=' + encodeURIComponent(data.token);
+        }
+      })
+      .catch(function () {
+        // Fallback gracefully without breaking UI
+      });
+  } catch (e) {}
+
+  card.appendChild(btn);
+
+  // Footer Note
+  var footer = document.createElement('div');
+  footer.style.marginTop = '10px';
+  footer.style.fontSize = '11px';
+  footer.style.color = mutedColor;
+  footer.style.textAlign = 'center';
+  footer.style.lineHeight = '1.4';
+  footer.textContent = '🔒 본 서비스는 SlotBridge Korea 공인 연합 네트워크를 통해 정식 공급업체로 1:1 연결됩니다.';
+  card.appendChild(footer);
+
+  root.appendChild(card);
+  currentScript.parentNode.insertBefore(root, currentScript.nextSibling);
 })();
