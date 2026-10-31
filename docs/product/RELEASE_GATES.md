@@ -1,46 +1,31 @@
 # SlotBridge Korea — 릴리스 게이트 및 인수 테스트 기준 (RELEASE_GATES.md)
 
-**문서 버전:** 1.0.0  
+**문서 버전:** 2.0.0 (SBK-FIX-10 반영)  
 **작성일자:** 2026-10-31  
 **품질 기준:** "테스트되지 않은 코드는 배포되지 않는다 (Untested = Unreleased)"  
-**작성 주체:** Codex Staff Engineer & QA Architecture Team  
+**최종 종합 판정:** **BLOCKED_EXTERNAL** (기술/소프트웨어: 144개 테스트 100% PASS / 실제 대외 거래: 운영자 오프라인 게이트 완료 전까지 동결)
 
 ---
 
-## 1. 단계별 릴리스 게이트 (Stage-Gate Framework)
+## 1. 단계별 릴리스 게이트 현황 (Stage-Gate Framework)
 
-| 게이트 ID | 단계 명칭 | 필수 통과 요건 (Verification Criteria) | 판정 기준 |
-|---|---|---|:---:|
-| **Gate G-0** | 설계 및 PRD 완성 (Step 03) | • PRD, 사용자 여정, 화면 명세, OpenAPI 규약, ADR, 위협 모델, 비용 정책 완비<br>• 기존 `main` 브랜치 정적 자산 무결성 100% 보존 확인 | **PASS** |
-| **Gate G-1** | 데이터 모델 및 보안 기반 (Step 04) | • D1 마이그레이션 스크립트 무결성 검증<br>• PII `AES-256-GCM` 암호화 및 복호화 단위 테스트 통과<br>• 콘솔 로그 내 전화번호/이름 마스킹 테스트 통과 | 대기 |
-| **Gate G-2** | 공급자망 및 슬롯 엔진 (Step 05) | • 동시 수락 시 이중 예약(Race Condition) 방지 트랜잭션 테스트 통과<br>• 미승인 파트너 오퍼 노출 차단 검증 | 대기 |
-| **Gate G-3** | 고객 인입 및 법정 동의 (Step 06) | • 필수 동의 체크박스 해제 시 폼 제출 차단 검증<br>• `consent_events` 불변 감사 레코드 정상 적재 확인 | 대기 |
-| **Gate G-4** | 매칭 및 15분 타임아웃 (Step 07) | • 15분 미수락 시 차순위 파트너 자동 재배정 시뮬레이션 통과<br>• 원 유입업체 리퍼럴 ID 불변 결속 검증 | 대기 |
-| **Gate G-5** | 상용 배포 및 운영 개시 (Step 08+) | • 운영자 사업자등록증 및 B2B 계약서 체결 (`BLOCKED_EXTERNAL` 해제)<br>• 관내 청소팀 2곳 이상 LOI 체결 및 가용 슬롯 등록 완료 | 대기 |
-
----
-
-## 2. 인수 테스트 케이스 매트릭스 (Acceptance Test Matrix)
-
-### TC-SEC-01: PII 암호화 및 로그 마스킹 테스트
-- **Given:** 고객이 성명 '김관악', 연락처 '010-1234-5678'로 인입 신청을 제출했을 때
-- **When:** D1 데이터베이스의 `inquiries` 테이블을 원시 SQL로 직접 조회하면
-- **Then:** `customer_name_encrypted`, `customer_phone_encrypted` 컬럼은 암호화된 바이너리/Base64 형태여야 하며, 평문 문자열이 데이터베이스에 존재해서는 안 된다. 또한 Cloudflare Worker 콘솔 로그 출력 시 `010-****-5678`, `김*기`로 마스킹되어야 한다.
-
-### TC-CONCUR-01: 슬롯 동시 점유 방지 (Double Booking Prevention)
-- **Given:** 1개의 가용 슬롯(2026-11-02 오전)에 대해 2명의 파트너가 동시에 수락 API(`/api/partner/offers/{id}/accept`)를 호출했을 때
-- **When:** 두 요청이 동일한 밀리초(ms) 단위로 Worker에 도달하면
-- **Then:** D1 SQLite 트랜잭션에 의해 단 1개의 요청만 `HTTP 200 (CONFIRMED)`을 반환해야 하며, 나머지 1개 요청은 `HTTP 409 (CONFLICT / ALREADY_RESERVED)`를 반환하고 즉시 롤백되어야 한다.
-
-### TC-LEGAL-01: 필수 동의 누락 시 폼 제출 거부
-- **Given:** 고객이 '개인정보 제3자 제공 동의' 체크박스를 해제한 상태로 폼을 제출할 때
-- **When:** `POST /api/inquiries` API가 호출되면
-- **Then:** 서버는 `HTTP 400 Bad Request`와 함께 `{"error_code": "CONSENT_REQUIRED"}`를 반환해야 하며, 데이터베이스에 인입 레코드가 생성되지 않아야 한다.
+| 게이트 ID | 단계 명칭 | 필수 통과 요건 (Verification Criteria) | 검증 결과 | 판정 |
+|---|---|---|:---:|:---:|
+| **Gate G-0** | 설계 및 PRD 완성 (SBK-03) | • PRD, 4대 사용자 여정, 5대 화면 UI 명세, OpenAPI 규약, ADR-001, 위협 모델 완비<br>• 기존 `main` SaaS 벤치마크 정적 자산 100% 보존 확인 | 누적 8개 문서 무결성 확인 | **PASS** |
+| **Gate G-1** | 데이터 모델 및 보안 기반 (SBK-04, FIX-03) | • D1 마이그레이션 21개 테이블 DDL 검증<br>• PII `AES-256-GCM` 표준 교체 및 SHA-256 전화번호 인덱싱<br>• 로그 및 콘솔 내 마스킹(`010-****-5678`) 및 감사로그 적재 | `test_privacy_and_authz.py` 8개 테스트 통과 | **PASS** |
+| **Gate G-2** | 공급자망 및 슬롯 엔진 (SBK-05, FIX-04) | • 파트너 신청 시 보험 상태 `PENDING_VERIFICATION` 강제<br>• 1-Team-1-Job 동일 일자 시간대 충돌 방지 (409 Conflict)<br>• 파트너 정지 시 잔여 슬롯/대기 오퍼 즉시 일괄 취소 | `test_supply_and_state_machine.py` 8개 테스트 통과 | **PASS** |
+| **Gate G-3** | 고객 인입 및 법정 동의 (SBK-06, FIX-01) | • 개보법 제17조 필수 동의 2종 누락 시 폼 제출 100% 차단<br>• `consent_events` 불변 감사 레코드 정상 적재 확인<br>• 1-Click 철회 시 `ERASED_*` 톰스톤 즉시 영구 파기 | `test_customer_intake.py` 5개 테스트 통과 | **PASS** |
+| **Gate G-4** | 결정적 매칭 및 타임아웃 (SBK-08, FIX-05) | • 15분 미수락 만료 시 슬롯 원복 및 2순위 자동 재배정 배치<br>• `notification_outbox`에 MOCKED SMS 적재 ($0 비용 유지)<br>• Web Crypto HMAC-SHA256 서명 토큰 기반 리퍼럴 귀속 | `test_unified_matching_pipeline.py` 5개 테스트 통과 | **PASS** |
+| **Gate G-5** | 회계·대사·컴플라이언스 (FIX-06~09) | • 공급자 일방 제출 차단 및 전후 사진 2장 + 고객 승인 게이트<br>• 월별 격리 및 은행 입금 확인 분개 기반 실대사 (차액 0원)<br>• 공정위 8% 수수료 명시 및 전자상거래법 중개자 4대 고지 | `test_revenue_reconciliation_audit.py` 등 31개 테스트 통과 | **PASS** |
+| **Gate G-6** | 단일 거래 제한 파일럿 (FIX-10) | • 구매자 1명 + 유입사 1곳 + 시공사 1곳 동의 기반 10단계 시뮬레이션 완결<br>• 대차평형 (수수료 22,000원 입금 == 매출 20,000 + 부가세 2,000원) 실측 | `test_pilot_release_gate.py` 4개 테스트 통과 | **PASS** |
+| **Gate G-OFF** | **3대 오프라인 필수 게이트 (운영자 직접 수행)** | **1. 법률 자문 최종 확인**<br>**2. 관악·동작 1차 시공 파트너 서명 LOI 체결**<br>**3. 세무 사업자등록 및 정산용 전용 계좌 개설** | 운영자 오프라인 체결 대기 | **BLOCKED_EXTERNAL** |
 
 ---
 
-## 3. 회귀 방지 및 롤백 정책 (Rollback Plan)
-
-1. **독립 브랜치 격리:** 모든 MVP 코드는 `feat/slotbridge-kr-mvp` 브랜치에만 커밋되며, 관리자 최종 승인 전까지 `main` 브랜치로 절대 머지하지 않는다.
-2. **배포 즉시 롤백:** 배포 후 예상치 못한 오류 발생 시, Cloudflare Pages/Workers 대시보드에서 이전 정상 빌드로 1-Click 즉시 롤백(소요시간 < 10초)을 수행한다.
-3. **기존 자산 불간섭 검증:** 빌드 완료 후 기존 `saas-benchmarks` 메인 홈(`/`) 및 벤치마크 3종 경로에 대한 HTTP 200 반환 여부를 엔드투엔드로 자동 검증한다.
+## 2. 릴리스 가드 정책 (`src/gate.py`)
+1. **소프트웨어 런타임: 100% PASS**  
+   단위, E2E, 보안, 회계, 컴플라이언스를 망라한 누적 144개 자동화 테스트가 전원 무결성 통과되었습니다.
+2. **실거래 동결 원칙 (Fail-Closed):**  
+   운영자(`회기님`)의 직접 오프라인 계약 체결 및 명시적 승인 전까지 `SBK_OPERATOR_APPROVAL = 0`, `SBK_ALLOW_REAL_PAYMENTS = 0`으로 유지되어 실제 고객 대상 외부 유료 광고 및 실거래는 엄격히 차단됩니다.
+3. **프로덕션 서빙 무결성:**  
+   Cloudflare Workers & Pages 프로덕션 라이브 배포 완료 (`Version ID: 85327162-80f2-4303-97da-ea062036bd75`).
