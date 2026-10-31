@@ -158,11 +158,17 @@
   <div class="container">
     <header>
       <div class="partner-info">
-        <h2>탑클린 동작점 (최반장님)</h2>
-        <p>활동 권역: 서울 동작구 전역 · 관악구 일부</p>
+        <h2>[시연용 샘플 계정] 탑클린 동작점</h2>
+        <p>활동 권역: 서울 동작구 전역 · 관악구 일부 (시뮬레이션)</p>
       </div>
-      <div class="badge-status">정식 승인됨 (APPROVED)</div>
+      <div class="badge-status" style="background:rgba(245, 158, 11, 0.15); color:#fbbf24; border-color:rgba(245, 158, 11, 0.3);">시뮬레이션 모드</div>
     </header>
+
+    <!-- SBK-FIX-01: 정직한 UI 게이트 (시연 포털 안내) -->
+    <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 12px; color: #fbbf24; line-height: 1.5;">
+      ⚠️ <strong>[시공 파트너 시연 포털]</strong><br>
+      본 화면은 파트너 오퍼 수락 및 슬롯 관리 플로우를 시연하는 데모 페이지입니다. 실제 계약 체결 및 D1 API 연동(FIX-02/04) 전까지는 실제 고객 오더가 연동되지 않습니다.
+    </div>
 
     <!-- 실시간 15분 독점 오퍼 모달 시뮬레이션 -->
     <div class="modal-offer" id="offer-modal">
@@ -241,12 +247,12 @@
     dateInput.value = dateInput.min;
 
     function acceptOffer() {
-      alert("오퍼를 수락했습니다!\n고객 연락처: 010-1234-5678 (김관악 님)\n30분 이내에 유선 연락하여 세부 동·호수와 최종 견적을 확정해 주세요.");
+      alert("[데모 모드]\n시연용 오퍼 수락 시뮬레이션입니다.\n백엔드 API 연동(FIX-02) 전이므로 실제 고객 연락처가 아닙니다.");
       document.getElementById('offer-modal').style.display = 'none';
     }
 
     function rejectOffer() {
-      if (confirm("정말 거절하시겠습니까? 차순위 대기 청소팀으로 즉시 재배정됩니다.")) {
+      if (confirm("[데모 모드] 정말 거절 시뮬레이션을 진행하시겠습니까?")) {
         document.getElementById('offer-modal').style.display = 'none';
       }
     }
@@ -254,7 +260,7 @@
     function addSlot() {
       const d = document.getElementById('new-slot-date').value;
       const w = document.getElementById('new-slot-window').value;
-      alert(`새 잔여 슬롯이 등록되었습니다: ${d} [${w}]\n매칭 인입 발생 시 즉시 오퍼가 전송됩니다.`);
+      alert(`[데모 모드]\n슬롯 등록 시뮬레이션: ${d} [${w}]\n실제 D1 데이터베이스 연동 전이므로 서버에 저장되지 않습니다.`);
     }
   </script>
 </body>

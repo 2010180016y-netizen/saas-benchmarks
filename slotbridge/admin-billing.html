@@ -96,44 +96,50 @@
     <header>
       <div>
         <h1>SlotBridge Korea — 재무·청구·정산 관제</h1>
-        <p style="font-size:12px; color:var(--muted); margin-top:2px;">기준월: 2026년 11월 · 복식부기 불변 원장 연동</p>
+        <p style="font-size:12px; color:var(--muted); margin-top:2px;">기준월: 2026년 11월 · 복식부기 불변 원장 연동 (시뮬레이션)</p>
       </div>
-      <span style="font-size:12px; background:#1e293b; color:#94a3b8; padding:4px 10px; border-radius:6px;">관리자 모드</span>
+      <span style="font-size:12px; background:rgba(245,158,11,0.15); color:#fbbf24; border:1px solid rgba(245,158,11,0.3); padding:4px 10px; border-radius:6px;">모크업 모드</span>
     </header>
+
+    <!-- SBK-FIX-01: 정직한 UI 게이트 (재무 관제 모크업 안내) -->
+    <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px; padding: 12px; margin-bottom: 20px; font-size: 12px; color: #fbbf24; line-height: 1.5;">
+      ⚠️ <strong>[관리자 재무 관제 콘솔 — 모크업 데모]</strong><br>
+      본 콘솔의 재무 지표 및 인보이스 내역은 UI 시연용 정적 예시 데이터입니다. 실제 D1 DB 및 은행 입금 실사 연동(FIX-02/07) 전까지는 실제 회계/매출 수치로 취급되지 않습니다.
+    </div>
 
     <div class="notice-human-gate">
       🔒 <strong>FinOps 운영 원칙:</strong> 예상 수익은 결코 원장에 계상되지 않으며, 고객 대금 수취는 청소업체와 현장 직결제됩니다. 관리자가 세금계산서를 수취 확인하기 전까지 자동 송금은 엄격히 차단됩니다.
     </div>
 
-    <!-- 4대 독립 재무 KPI -->
+    <!-- 4대 독립 재무 KPI (시연용 예시) -->
     <div class="kpi-grid">
       <div class="kpi-card">
-        <div class="kpi-title">1. 예상 수익 (미확정)</div>
+        <div class="kpi-title">1. 예상 수익 (예시)</div>
         <div class="kpi-val" style="color:#94a3b8;">140,000원</div>
-        <small style="font-size:10px; color:#64748b;">인입 7건 진행 중</small>
+        <small style="font-size:10px; color:#64748b;">인입 7건 진행 중 (시뮬레이션)</small>
       </div>
       <div class="kpi-card">
-        <div class="kpi-title">2. 검증 완료 청구 대상</div>
+        <div class="kpi-title">2. 검증 완료 청구 대상 (예시)</div>
         <div class="kpi-val" style="color:#60a5fa;">280,000원</div>
-        <small style="font-size:10px; color:#64748b;">시공 검수 14건 완료</small>
+        <small style="font-size:10px; color:#64748b;">시공 검수 14건 완료 (시뮬레이션)</small>
       </div>
       <div class="kpi-card">
-        <div class="kpi-title">3. 공식 청구액 (발행)</div>
+        <div class="kpi-title">3. 공식 청구액 (예시)</div>
         <div class="kpi-val" style="color:#f59e0b;">240,000원</div>
-        <small style="font-size:10px; color:#64748b;">인보이스 12건 발행</small>
+        <small style="font-size:10px; color:#64748b;">인보이스 12건 발행 (시뮬레이션)</small>
       </div>
       <div class="kpi-card">
-        <div class="kpi-title">4. 실제 입금 정산액</div>
+        <div class="kpi-title">4. 실제 입금 정산액 (예시)</div>
         <div class="kpi-val" style="color:#10b981;">180,000원</div>
-        <small style="font-size:10px; color:#64748b;">은행 입금 9건 대사 완료</small>
+        <small style="font-size:10px; color:#64748b;">은행 입금 9건 대사 (시뮬레이션)</small>
       </div>
     </div>
 
     <!-- 파트너 청구서 관리 -->
     <div class="card">
       <h2>
-        <span>📑 B2B 성과 수수료 청구서 (8% + VAT)</span>
-        <button class="btn-action" onclick="alert('2026-11월 청구서 초안(DRAFT) 일괄 생성이 완료되었습니다.')">+ 청구서 초안 생성</button>
+        <span>📑 B2B 성과 수수료 청구서 (8% + VAT) — 예시</span>
+        <button class="btn-action" onclick="alert('[데모 모드] 실제 D1 API 연동(FIX-02/07) 전이므로 청구서가 생성되지 않습니다.')">+ 청구서 초안 생성</button>
       </h2>
       <table>
         <thead>

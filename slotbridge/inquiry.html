@@ -154,6 +154,12 @@
       <p class="desc">일정 마감으로 거절당하셨나요? 관내 청소팀의 빈 일정에 1:1로 즉시 연결해 드립니다.</p>
     </header>
 
+    <!-- SBK-FIX-01: 정직한 UI 게이트 (파일럿 시연 안내) -->
+    <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 12px; color: #fbbf24; line-height: 1.5;">
+      ⚠️ <strong>[파일럿 런칭 준비 안내 — 데모 모드]</strong><br>
+      현재 SlotBridge Korea는 관악·동작구 파트너사 제휴 준비 단계입니다. 실제 청소 오더 접수 API 연동(FIX-02) 전까지 본 화면을 통한 신청은 실제 청소팀에 전송되지 않는 시뮬레이션 모드로 작동합니다.
+    </div>
+
     <div class="card">
       <form id="inquiry-form">
         <input type="hidden" id="attribution_partner_id" value="">
@@ -321,9 +327,10 @@
         return;
       }
 
-      // Generate simulation token
-      const mockToken = 'cst_' + Math.random().toString(36).substring(2, 10);
-      window.location.href = `status.html?token=${mockToken}&date=${document.getElementById('requested_date').value}&dist=${document.getElementById('district').value}`;
+      // SBK-FIX-01: Honest Demo Isolation
+      alert('[파일럿 시연 안내]\n현재 관악·동작구 정식 파트너십 체결 준비(데모) 단계입니다.\n실제 청소 오더 접수 API 연결(FIX-02) 전까지는 시연용 화면으로 작동하며, 입력하신 정보는 실제 청소팀에 전송되지 않습니다.');
+      const mockToken = 'DEMO_' + Math.random().toString(36).substring(2, 10).toUpperCase();
+      window.location.href = `status.html?demo=true&token=${mockToken}&date=${document.getElementById('requested_date').value}&dist=${document.getElementById('district').value}`;
     });
   </script>
 </body>

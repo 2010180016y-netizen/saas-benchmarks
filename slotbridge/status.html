@@ -93,9 +93,15 @@
 <body>
   <div class="container">
     <header>
-      <div class="status-badge" id="badge-status">매칭 진행 중 (오퍼 전송 완료)</div>
+      <div class="status-badge" id="badge-status" style="background:rgba(245, 158, 11, 0.15); color:#fbbf24; border-color:rgba(245, 158, 11, 0.3);">[데모 시뮬레이션 화면] (실제 미접수)</div>
       <h1>신청 현황 및 개인정보 관리</h1>
     </header>
+
+    <!-- SBK-FIX-01: 정직한 UI 게이트 (시연 화면 안내) -->
+    <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 12px; color: #fbbf24; line-height: 1.5;">
+      ⚠️ <strong>[시뮬레이션 모크업 화면]</strong><br>
+      본 화면은 매칭 및 철회 플로우를 시연하는 데모 페이지입니다. 실제 청소팀에 오더가 발송되지 않았으며, 백엔드 API 연동(FIX-02) 전까지 실데이터는 서버에 저장되지 않습니다.
+    </div>
 
     <div class="card" id="main-card">
       <div class="info-row">
@@ -116,7 +122,7 @@
       </div>
       <div class="info-row">
         <span class="info-label">배정 현황</span>
-        <span class="info-val" style="color:#34d399;" id="disp-match">관내 1순위 청소팀 수락 대기중 (15분)</span>
+        <span class="info-val" style="color:#fbbf24;" id="disp-match">[데모] 시연용 매칭 대기 표시 (실제 파트너 미배정)</span>
       </div>
 
       <div class="action-box">
@@ -147,12 +153,13 @@
     }
 
     function executeRevocation() {
-      if (confirm("정말 신청을 취소하고 개인정보를 즉시 영구 파기하시겠습니까?")) {
+      if (confirm("정말 신청 취소 플로우를 시연하시겠습니까? (데모 모드)")) {
         document.getElementById('main-card').style.display = 'none';
-        document.getElementById('badge-status').textContent = '신청 취소됨 (개인정보 파기 완료)';
+        document.getElementById('badge-status').textContent = '데모 취소 완료 (실제 데이터 없음)';
         document.getElementById('badge-status').style.background = 'rgba(239, 68, 68, 0.15)';
         document.getElementById('badge-status').style.color = '#f87171';
         document.getElementById('badge-status').style.borderColor = 'rgba(239, 68, 68, 0.3)';
+        document.getElementById('erased-banner').innerHTML = '<strong>🗑️ 데모 취소 시뮬레이션 완료</strong><br>실제 서버나 데이터베이스에 저장된 내역이 없는 데모 상태입니다. (실제 데이터베이스 호출 없음)';
         document.getElementById('erased-banner').style.display = 'block';
       }
     }
