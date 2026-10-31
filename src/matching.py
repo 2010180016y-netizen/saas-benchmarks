@@ -82,10 +82,16 @@ def transition_state(
 
     # Update Entity Status atomically (B07 Defense: Enforces actual DB status matches from_state)
     table_name = "inquiries" if entity_type == "INQUIRY" else "matches"
-    cur = db.execute(
-        f"UPDATE {table_name} SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
-        (to_state, now_iso, entity_id, from_state)
-    )
+    if entity_type == "MATCH" and to_state == "BOOKED" and evidence and evidence.get("agreed_price"):
+        cur = db.execute(
+            f"UPDATE matches SET status = ?, final_amount = ?, updated_at = ? WHERE id = ? AND status = ?",
+            (to_state, evidence["agreed_price"], now_iso, entity_id, from_state)
+        )
+    else:
+        cur = db.execute(
+            f"UPDATE {table_name} SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+            (to_state, now_iso, entity_id, from_state)
+        )
     if cur.rowcount == 0:
         actual_row = db.execute(f"SELECT status FROM {table_name} WHERE id = ?", (entity_id,)).fetchone()
         actual_status = actual_row["status"] if actual_row else "NOT_FOUND"
