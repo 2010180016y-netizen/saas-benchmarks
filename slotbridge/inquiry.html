@@ -265,16 +265,20 @@
   </div>
 
   <script>
-    // 1. Setup Dates (Tomorrow to +3 days in Seoul Time)
+    // 1. Setup Dates (Tomorrow to +3 days in Seoul/KST Time)
     const dateSelect = document.getElementById('requested_date');
     const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
     for (let i = 1; i <= 3; i++) {
-      const d = new Date();
-      d.setDate(d.getDate() + i);
-      const iso = d.toISOString().split('T')[0];
+      const kstDate = new Date(Date.now() + 9 * 3600 * 1000);
+      kstDate.setDate(kstDate.getUTCDate() + i);
+      const year = kstDate.getUTCFullYear();
+      const month = String(kstDate.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(kstDate.getUTCDate()).padStart(2, '0');
+      const iso = `${year}-${month}-${day}`;
+      const dayIndex = kstDate.getUTCDay();
       const opt = document.createElement('option');
       opt.value = iso;
-      opt.textContent = `${iso} (${dayNames[d.getDay()]}) ${i === 1 ? '내일 급행' : ''}`;
+      opt.textContent = `${iso} (${dayNames[dayIndex]}) ${i === 1 ? '내일 급행' : ''}`;
       dateSelect.appendChild(opt);
     }
 
@@ -347,7 +351,7 @@
         housing_type: document.querySelector('input[name="housing_type"]:checked') ? document.querySelector('input[name="housing_type"]:checked').value : 'STUDIO',
         area_pyeong: document.getElementById('area_pyeong').value,
         requested_date: document.getElementById('requested_date').value,
-        requested_time_window: 'MORNING',
+        requested_time_window: document.getElementById('time_window').value || 'MORNING',
         agreed_privacy_collection: col,
         agreed_third_party_share: share,
         agreed_marketing: document.getElementById('agreed_marketing').checked,

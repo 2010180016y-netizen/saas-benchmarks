@@ -336,6 +336,25 @@ async function handleApiRequest(request, url, env) {
     if (gateErr) return gateErr;
 
     try {
+      // SBK-MINI-06: Idempotency check via Idempotency-Key header
+      const idempotencyKey = request.headers.get("Idempotency-Key");
+      if (idempotencyKey) {
+        const existing = await env.DB.prepare(
+          "SELECT id, tracking_token, status, district, neighborhood, requested_date, time_window FROM inquiries WHERE id = ? OR tracking_token = ?"
+        ).bind(idempotencyKey, idempotencyKey).first();
+        if (existing) {
+          return jsonResponse({
+            ok: true,
+            inquiry_id: existing.id,
+            tracking_token: existing.tracking_token,
+            status_token: existing.tracking_token,
+            status: existing.status,
+            idempotent_replay: true,
+            message: "이전에 정상 접수된 신청 내역이 반환되었습니다 (Idempotent Replay)."
+          }, 200);
+        }
+      }
+
       const body = await request.json();
 
       // Consent validation
@@ -364,10 +383,27 @@ async function handleApiRequest(request, url, env) {
         return errorResponse("INVALID_NEIGHBORHOOD", "법정동을 선택해 주세요.", 400);
       }
 
+      // SBK-MINI-06: KST 24~72h date and time_window validation
+      const requestedDate = (body.requested_date || "").trim();
+      if (!requestedDate || !/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
+        return errorResponse("INVALID_DATE", "신청 일자는 YYYY-MM-DD 형식이어야 합니다.", 400);
+      }
+      const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
+      const todayKstStr = kstNow.toISOString().split("T")[0];
+      const todayKstMs = new Date(todayKstStr + "T00:00:00+09:00").getTime();
+      const reqDateMs = new Date(requestedDate + "T00:00:00+09:00").getTime();
+      const diffDays = Math.round((reqDateMs - todayKstMs) / (24 * 3600 * 1000));
+      if (diffDays < 1 || diffDays > 3) {
+        return errorResponse("DATE_OUT_OF_WINDOW", "신청 일자는 KST 기준 내일~3일 이내(24~72시간 급행)만 가능합니다.", 400);
+      }
+
+      const timeWindow = body.requested_time_window || "MORNING";
+      if (!["MORNING", "AFTERNOON", "ALL_DAY"].includes(timeWindow)) {
+        return errorResponse("INVALID_TIME_WINDOW", "희망 시간대는 MORNING, AFTERNOON, ALL_DAY 중 하나여야 합니다.", 400);
+      }
+
       const housingType = body.housing_type || "STUDIO";
       const areaPyeong = Number(body.area_pyeong) || 8;
-      const requestedDate = body.requested_date;
-      const timeWindow = body.requested_time_window || "MORNING";
       
       // SBK-FIX-03 & SBK-MINI-05: Attribution verification & anti-spoofing
       let attributionPartnerId = null;
@@ -401,37 +437,18 @@ async function handleApiRequest(request, url, env) {
         return errorResponse("ENCRYPTION_FAILED", err.message || "암호화 실패 (Fail-Closed)", err.status || 503);
       }
 
-      const inquiryId = "inq_" + crypto.randomUUID();
+      // SBK-MINI-06: Deduplication check
+      const duplicateInquiry = await env.DB.prepare(
+        "SELECT id FROM inquiries WHERE customer_phone_hash = ? AND requested_date = ? AND status NOT IN ('CANCELLED', 'FULFILLED')"
+      ).bind(phoneHash, requestedDate).first();
+      if (duplicateInquiry) {
+        return errorResponse("DUPLICATE_INQUIRY", "동일한 연락처로 해당 일자에 이미 진행 중인 신청 내역이 존재합니다.", 409);
+      }
+
+      const inquiryId = idempotencyKey || ("inq_" + crypto.randomUUID());
       const trackingToken = crypto.randomUUID();
       const nowIso = new Date().toISOString();
       const expiresAt = new Date(Date.now() + 72 * 3600 * 1000).toISOString();
-
-      // Execute D1 Insert matching 0001_initial_schema.sql
-      await env.DB.prepare(
-        `INSERT INTO inquiries (
-          id, tracking_token, district, neighborhood, housing_type, area_pyeong,
-          requested_date, time_window, customer_name_encrypted, customer_phone_encrypted,
-          customer_phone_hash, attribution_partner_id, status, expires_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_MATCH', ?, ?, ?)`
-      )
-        .bind(
-          inquiryId,
-          trackingToken,
-          district,
-          neighborhood,
-          housingType,
-          areaPyeong,
-          requestedDate,
-          timeWindow,
-          encName,
-          encPhone,
-          phoneHash,
-          attributionPartnerId,
-          expiresAt,
-          nowIso,
-          nowIso
-        )
-        .run();
 
       // Real client IP hash & user agent capture (no fake constants)
       const rawIp = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "";
@@ -445,14 +462,45 @@ async function handleApiRequest(request, url, env) {
       }
       const userAgent = (request.headers.get("User-Agent") || "NOT_COLLECTED").slice(0, 255);
 
-      // Record Consent Event
-      await env.DB.prepare(
+      // SBK-MINI-06: Atomic D1 batch execution for inquiry + consent event
+      const insertInquiryStmt = env.DB.prepare(
+        `INSERT INTO inquiries (
+          id, tracking_token, district, neighborhood, housing_type, area_pyeong,
+          requested_date, time_window, customer_name_encrypted, customer_phone_encrypted,
+          customer_phone_hash, attribution_partner_id, status, expires_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_MATCH', ?, ?, ?)`
+      ).bind(
+        inquiryId,
+        trackingToken,
+        district,
+        neighborhood,
+        housingType,
+        areaPyeong,
+        requestedDate,
+        timeWindow,
+        encName,
+        encPhone,
+        phoneHash,
+        attributionPartnerId,
+        expiresAt,
+        nowIso,
+        nowIso
+      );
+
+      const insertConsentStmt = env.DB.prepare(
         `INSERT INTO consent_events (
           id, inquiry_id, terms_version, agreed_privacy_collection, agreed_third_party_share, agreed_marketing, client_ip_hash, user_agent, consented_at
         ) VALUES (?, ?, 'v1.0-20261031', 1, 1, ?, ?, ?, ?)`
-      )
-        .bind("cst_" + crypto.randomUUID(), inquiryId, body.agreed_marketing ? 1 : 0, clientIpHash, userAgent, nowIso)
-        .run();
+      ).bind(
+        "cst_" + crypto.randomUUID(),
+        inquiryId,
+        body.agreed_marketing ? 1 : 0,
+        clientIpHash,
+        userAgent,
+        nowIso
+      );
+
+      await env.DB.batch([insertInquiryStmt, insertConsentStmt]);
 
       return jsonResponse(
         {
@@ -586,6 +634,14 @@ async function handleApiRequest(request, url, env) {
       }
       if (!rep) {
         return errorResponse("INVALID_REP", "대표자명을 입력해 주세요.", 400);
+      }
+
+      // SBK-MINI-06: Business number duplicate check
+      const existingPartner = await env.DB.prepare(
+        "SELECT id, name FROM partners WHERE business_number = ?"
+      ).bind(bizNum).first();
+      if (existingPartner) {
+        return errorResponse("DUPLICATE_PARTNER", "이미 등록된 사업자등록번호입니다.", 409);
       }
 
       const orgId = "org_" + crypto.randomUUID();
@@ -751,6 +807,46 @@ async function handleApiRequest(request, url, env) {
       if (dbErr) return dbErr;
       const rows = await env.DB.prepare("SELECT * FROM payouts ORDER BY created_at DESC LIMIT 20").all();
       return jsonResponse({ ok: true, payouts: rows.results || [] });
+    }
+
+    // SBK-MINI-06: Admin Verify/Approve Partner POST /admin/partners/:id/verify
+    const matchPartnerVerify = path.match(/^\/admin\/partners\/([a-zA-Z0-9_-]+)\/verify$/);
+    if (matchPartnerVerify && method === "POST") {
+      const dbErr = checkD1Database(env);
+      if (dbErr) return dbErr;
+
+      const pId = matchPartnerVerify[1];
+      const body = await request.json().catch(() => ({}));
+      const decision = body.decision === "REJECT" ? "SUSPENDED" : "APPROVED";
+      const insuranceStatus = body.liability_insurance_verified ? "VERIFIED" : "PENDING";
+      const nowIso = new Date().toISOString();
+
+      const partner = await env.DB.prepare("SELECT id, name FROM partners WHERE id = ?").bind(pId).first();
+      if (!partner) {
+        return errorResponse("PARTNER_NOT_FOUND", "해당 파트너를 찾을 수 없습니다.", 404);
+      }
+
+      await env.DB.prepare(
+        "UPDATE partners SET verification_status = ?, liability_insurance_status = ?, updated_at = ? WHERE id = ?"
+      ).bind(decision, insuranceStatus, nowIso, pId).run();
+
+      await env.DB.prepare(
+        `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+        VALUES (?, 'ADMIN', 'PARTNER_VERIFIED', 'PARTNER', ?, ?, ?)`
+      ).bind(
+        "aud_" + crypto.randomUUID(),
+        pId,
+        JSON.stringify({ decision, liability_insurance_verified: Boolean(body.liability_insurance_verified) }),
+        nowIso
+      ).run();
+
+      return jsonResponse({
+        ok: true,
+        partner_id: pId,
+        verification_status: decision,
+        liability_insurance_status: insuranceStatus,
+        message: `파트너 서류 심사가 완료되었습니다: ${decision}`
+      });
     }
   }
 

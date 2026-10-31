@@ -24,14 +24,14 @@ class TestNoPlaintextPii(unittest.TestCase):
 
         # 1. Plaintext phone replacement must NOT be bound to customer_phone_hash in D1 insert
         self.assertNotIn(
-            'phone.replace(/[^0-9]/g, ""),\n          attributionPartnerId,',
-            js,
-            "Raw digits phone.replace(/[^0-9]/g, '') must NOT be bound directly to customer_phone_hash"
+            'phone.replace(/[^0-9]/g, "")',
+            js[js.find("INSERT INTO inquiries"):js.find("INSERT INTO consent_events")],
+            "Raw digits phone.replace(/[^0-9]/g, '') must NOT be bound directly to customer_phone_hash in inquiries insert"
         )
         self.assertIn(
-            'phoneHash,\n          attributionPartnerId,',
-            js,
-            "customer_phone_hash must be bound to phoneHash"
+            'phoneHash,',
+            js[js.find("INSERT INTO inquiries"):js.find("INSERT INTO consent_events")],
+            "customer_phone_hash must be bound to phoneHash in inquiries insert"
         )
 
         # 2. Keyed HMAC hashPhoneNumber and decryptPii must exist
