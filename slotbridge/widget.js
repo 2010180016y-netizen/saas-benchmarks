@@ -130,14 +130,14 @@
 
   card.appendChild(btn);
 
-  // Footer Note
+  // Footer Note (Compliance with FTC guidelines & E-Commerce Broker Notice)
   var footer = document.createElement('div');
   footer.style.marginTop = '10px';
-  footer.style.fontSize = '11px';
+  footer.style.fontSize = '10px';
   footer.style.color = mutedColor;
   footer.style.textAlign = 'center';
   footer.style.lineHeight = '1.4';
-  footer.textContent = '🔒 본 서비스는 SlotBridge Korea 공인 연합 네트워크를 통해 정식 공급업체로 1:1 연결됩니다.';
+  footer.textContent = '🔒 통신판매중개: SlotBridge Korea (거래 당사자 아님) · 공정위 심사지침 준수: 이용 시 추천 제휴사에 소정의 중개 수수료가 배분될 수 있습니다.';
   card.appendChild(footer);
 
   root.appendChild(card);
