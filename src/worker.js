@@ -233,6 +233,133 @@ function checkOperatorReleaseGate(env) {
   return null;
 }
 
+// SBK-MINI-08: Deterministic Candidate Evaluation & 1:1 Exclusive Offer Dispatch
+async function dispatchCandidateOffer(inquiryId, env, ttlMinutes = 15) {
+  if (!env.DB) return null;
+  const inq = await env.DB.prepare("SELECT * FROM inquiries WHERE id = ?").bind(inquiryId).first();
+  if (!inq) return null;
+  if (["CANCELLED", "MATCHED", "FULFILLED", "BOOKED", "COMPLETED", "VERIFIED", "BILLABLE"].includes(inq.status)) {
+    return null;
+  }
+
+  // 1. Fetch available slots matching date, district, verified insurance, approved partner
+  const query = `
+    SELECT
+      cs.id AS slot_id, cs.partner_id, cs.slot_date, cs.time_window,
+      p.name AS partner_name, p.verification_status, p.liability_insurance_status,
+      p.rating_average, p.total_completed_count,
+      sa.district
+    FROM capacity_slots cs
+    JOIN partners p ON cs.partner_id = p.id
+    JOIN service_areas sa ON sa.partner_id = p.id
+    WHERE cs.slot_date = ?
+      AND cs.status = 'AVAILABLE'
+      AND sa.district = ?
+      AND sa.is_active = 1
+      AND p.verification_status = 'APPROVED'
+      AND p.liability_insurance_status = 'VERIFIED'
+  `;
+  const candidatesRes = await env.DB.prepare(query).bind(inq.requested_date, inq.district).all();
+  const candidates = candidatesRes.results || [];
+
+  const qualifiedCandidates = [];
+  const reqWindow = inq.time_window || "MORNING";
+
+  for (const c of candidates) {
+    const slotWindow = c.time_window || "MORNING";
+    if (reqWindow !== "ALL_DAY" && slotWindow !== "ALL_DAY" && slotWindow !== reqWindow) {
+      continue;
+    }
+
+    // Check if partner previously rejected or timed out
+    const rejected = await env.DB.prepare(
+      `SELECT pr.id FROM partner_responses pr
+       JOIN assignment_offers ao ON pr.offer_id = ao.id
+       WHERE ao.inquiry_id = ? AND pr.partner_id = ? AND pr.response_type IN ('REJECT', 'TIMEOUT')`
+    ).bind(inquiryId, c.partner_id).first();
+    if (rejected) continue;
+
+    // Equity balance dispatches count
+    const dispatchesRow = await env.DB.prepare(
+      "SELECT count(*) AS cnt FROM assignment_offers WHERE partner_id = ?"
+    ).bind(c.partner_id).first();
+    const dispatchesCnt = dispatchesRow ? (dispatchesRow.cnt || 0) : 0;
+
+    const score = (
+      (Number(c.rating_average || 5.0) * 20.0) +
+      (Math.min(Number(c.total_completed_count || 0), 100) * 0.5) +
+      (10.0 / (dispatchesCnt + 1))
+    );
+
+    qualifiedCandidates.push({
+      slot_id: c.slot_id,
+      partner_id: c.partner_id,
+      partner_name: c.partner_name,
+      score
+    });
+  }
+
+  const nowIso = new Date().toISOString();
+  if (qualifiedCandidates.length === 0) {
+    await env.DB.prepare("UPDATE inquiries SET status = 'WAITING', updated_at = ? WHERE id = ?").bind(nowIso, inquiryId).run();
+    return null;
+  }
+
+  // Sort deterministically by score DESC
+  qualifiedCandidates.sort((a, b) => b.score - a.score);
+
+  let winner = null;
+  for (const cand of qualifiedCandidates) {
+    const slotUpdate = await env.DB.prepare(
+      "UPDATE capacity_slots SET status = 'OFFERED', updated_at = ? WHERE id = ? AND status = 'AVAILABLE'"
+    ).bind(nowIso, cand.slot_id).run();
+    if (slotUpdate.meta && slotUpdate.meta.changes > 0) {
+      winner = cand;
+      break;
+    }
+  }
+
+  if (!winner) {
+    await env.DB.prepare("UPDATE inquiries SET status = 'WAITING', updated_at = ? WHERE id = ?").bind(nowIso, inquiryId).run();
+    return null;
+  }
+
+  const offerId = "off_" + crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000).toISOString();
+
+  await env.DB.prepare("UPDATE inquiries SET status = 'OFFERED', updated_at = ? WHERE id = ?").bind(nowIso, inquiryId).run();
+
+  await env.DB.prepare(
+    `INSERT INTO assignment_offers (id, inquiry_id, partner_id, slot_id, priority, status, expires_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 1, 'PENDING', ?, ?, ?)`
+  ).bind(offerId, inquiryId, winner.partner_id, winner.slot_id, expiresAt, nowIso, nowIso).run();
+
+  const notifId = "notif_" + crypto.randomUUID();
+  const notifPayload = {
+    offer_id: offerId,
+    inquiry_id: inquiryId,
+    district: inq.district,
+    requested_date: inq.requested_date,
+    time_window: reqWindow,
+    expires_at: expiresAt,
+    channel: "MOCKED_SMS"
+  };
+  await env.DB.prepare(
+    `INSERT INTO notification_outbox (id, recipient_type, recipient_destination, notification_type, payload, status, created_at)
+     VALUES (?, 'PARTNER', ?, 'OFFER_ALERT', ?, 'MOCKED', ?)`
+  ).bind(notifId, winner.partner_id, JSON.stringify(notifPayload), nowIso).run().catch(() => {});
+
+  return {
+    offer_id: offerId,
+    inquiry_id: inquiryId,
+    partner_id: winner.partner_id,
+    partner_name: winner.partner_name,
+    slot_id: winner.slot_id,
+    score: winner.score,
+    expires_at: expiresAt
+  };
+}
+
 async function handleApiRequest(request, url, env) {
   const path = url.pathname.replace("/api/v1/slotbridge", "");
   const method = request.method;
@@ -502,13 +629,17 @@ async function handleApiRequest(request, url, env) {
 
       await env.DB.batch([insertInquiryStmt, insertConsentStmt]);
 
+      // SBK-MINI-08: Trigger deterministic 1:1 matching & exclusive offer dispatch
+      const dispatchResult = await dispatchCandidateOffer(inquiryId, env);
+      const finalStatus = dispatchResult ? "OFFERED" : "WAITING";
+
       return jsonResponse(
         {
           ok: true,
           inquiry_id: inquiryId,
           tracking_token: trackingToken,
           status_token: trackingToken,
-          status: "PENDING_MATCH",
+          status: finalStatus,
           district,
           neighborhood,
           requested_date: requestedDate,
@@ -517,7 +648,10 @@ async function handleApiRequest(request, url, env) {
             name: maskName(name),
             phone: maskPhone(phone),
           },
-          message: "급행 매칭 신청이 D1 데이터베이스에 정상 접수되었습니다.",
+          matched_offer: dispatchResult,
+          message: dispatchResult
+            ? "적격 파트너사에 15분 독점 오퍼가 발급되었습니다."
+            : "급행 매칭 신청이 D1에 접수되었으며 가용 슬롯 탐색 대기 중입니다 (WAITING).",
         },
         201
       );
@@ -888,6 +1022,189 @@ async function handleApiRequest(request, url, env) {
       status: "CANCELLED",
       message: "가용 슬롯이 성공적으로 취소되었습니다."
     });
+  }
+
+  // 5.2 Assignment Offers: GET /offers, POST /offers/:id/accept, POST /offers/:id/reject (SBK-MINI-08)
+  if (path === "/offers" && method === "GET") {
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
+
+    const partnerId = url.searchParams.get("partner_id");
+    if (!partnerId) {
+      return errorResponse("PARTNER_ID_REQUIRED", "partner_id 파라미터가 필요합니다.", 400);
+    }
+
+    const partner = await env.DB.prepare("SELECT id, business_number FROM partners WHERE id = ?").bind(partnerId).first();
+    if (!partner) {
+      return errorResponse("PARTNER_NOT_FOUND", "파트너 정보를 찾을 수 없습니다.", 404);
+    }
+
+    const partnerKey = request.headers.get("X-SBK-Partner-Key") || url.searchParams.get("partner_key");
+    const adminKey = request.headers.get("X-SBK-Admin-Key") || url.searchParams.get("admin_key");
+    const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
+    const isOwner = partnerKey && (partnerKey === partner.business_number || partnerKey === env.SBK_ATTRIBUTION_SECRET);
+
+    if (!isAdmin && !isOwner) {
+      return errorResponse("FORBIDDEN", "본인에게 배정된 오퍼 목록만 조회할 수 있습니다.", 403);
+    }
+
+    const rows = await env.DB.prepare(
+      "SELECT * FROM assignment_offers WHERE partner_id = ? ORDER BY created_at DESC"
+    ).bind(partnerId).all();
+
+    return jsonResponse({
+      ok: true,
+      partner_id: partnerId,
+      offers: rows.results || []
+    });
+  }
+
+  const matchOfferAccept = path.match(/^\/offers\/([a-zA-Z0-9_-]+)\/accept$/);
+  if (matchOfferAccept && method === "POST") {
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
+
+    const offerId = matchOfferAccept[1];
+    const body = await request.json().catch(() => ({}));
+    const partnerId = body.partner_id;
+    const partnerKey = request.headers.get("X-SBK-Partner-Key") || body.partner_key;
+    const adminKey = request.headers.get("X-SBK-Admin-Key") || body.admin_key;
+
+    if (!partnerId) {
+      return errorResponse("PARTNER_ID_REQUIRED", "partner_id가 필요합니다.", 400);
+    }
+
+    const offer = await env.DB.prepare("SELECT * FROM assignment_offers WHERE id = ?").bind(offerId).first();
+    if (!offer) {
+      return errorResponse("OFFER_NOT_FOUND", "해당 오퍼를 찾을 수 없습니다.", 404);
+    }
+
+    const partner = await env.DB.prepare(
+      "SELECT id, business_number, verification_status FROM partners WHERE id = ?"
+    ).bind(partnerId).first();
+    if (!partner) {
+      return errorResponse("PARTNER_NOT_FOUND", "파트너 정보를 찾을 수 없습니다.", 404);
+    }
+
+    if (partner.verification_status !== "APPROVED") {
+      return errorResponse("UNAPPROVED_PARTNER", "미승인 파트너는 오퍼를 수락할 수 없습니다.", 403);
+    }
+
+    const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
+    const isOwner = partnerKey && (partnerKey === partner.business_number || partnerKey === env.SBK_ATTRIBUTION_SECRET);
+
+    if (offer.partner_id !== partnerId || (!isAdmin && !isOwner)) {
+      return errorResponse("FORBIDDEN", "본인에게 배정된 오퍼만 수락할 수 있습니다.", 403);
+    }
+
+    if (offer.status !== "PENDING") {
+      return errorResponse("ALREADY_PROCESSED", `오퍼가 이미 ${offer.status} 상태입니다.`, 409);
+    }
+
+    const nowIso = new Date().toISOString();
+    if (nowIso > offer.expires_at) {
+      await env.DB.prepare("UPDATE assignment_offers SET status = 'EXPIRED', updated_at = ? WHERE id = ?").bind(nowIso, offerId).run();
+      await env.DB.prepare("UPDATE capacity_slots SET status = 'AVAILABLE', updated_at = ? WHERE id = ?").bind(nowIso, offer.slot_id).run();
+      await env.DB.prepare("UPDATE inquiries SET status = 'PENDING_MATCH', updated_at = ? WHERE id = ?").bind(nowIso, offer.inquiry_id).run();
+      return errorResponse("OFFER_EXPIRED", "15분 수락 제한시간이 만료되었습니다.", 410);
+    }
+
+    // Atomic conditional slot locking (WHERE status = 'OFFERED')
+    const slotLock = await env.DB.prepare(
+      "UPDATE capacity_slots SET status = 'RESERVED', allocated_count = 1, updated_at = ? WHERE id = ? AND status = 'OFFERED'"
+    ).bind(nowIso, offer.slot_id).run();
+
+    if (!slotLock.meta || slotLock.meta.changes === 0) {
+      return errorResponse("CONCURRENCY_CONFLICT", "슬롯이 이미 다른 요청에 배정되었거나 상태가 변경되었습니다.", 409);
+    }
+
+    // Atomic conditional offer status update (WHERE status = 'PENDING')
+    const offerUpdate = await env.DB.prepare(
+      "UPDATE assignment_offers SET status = 'ACCEPTED', updated_at = ? WHERE id = ? AND status = 'PENDING'"
+    ).bind(nowIso, offerId).run();
+
+    if (!offerUpdate.meta || offerUpdate.meta.changes === 0) {
+      return errorResponse("ALREADY_PROCESSED", "오퍼가 이미 처리되었거나 동시 수락 경합이 발생했습니다.", 409);
+    }
+
+    await env.DB.prepare("UPDATE inquiries SET status = 'MATCHED', updated_at = ? WHERE id = ?").bind(nowIso, offer.inquiry_id).run();
+
+    await env.DB.prepare(
+      "INSERT INTO partner_responses (id, offer_id, partner_id, response_type, responded_at) VALUES (?, ?, ?, 'ACCEPT', ?)"
+    ).bind("resp_" + crypto.randomUUID(), offerId, partnerId, nowIso).run();
+
+    const matchId = "mat_" + crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO matches (id, inquiry_id, partner_id, slot_id, status, estimated_amount, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'CONFIRMED', 250000, ?, ?)`
+    ).bind(matchId, offer.inquiry_id, partnerId, offer.slot_id, nowIso, nowIso).run();
+
+    await env.DB.prepare(
+      `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+       VALUES (?, ?, 'OFFER_ACCEPTED', 'MATCH', ?, ?, ?)`
+    ).bind("aud_" + crypto.randomUUID(), partnerId, matchId, JSON.stringify({ offer_id: offerId, slot_id: offer.slot_id }), nowIso).run();
+
+    return jsonResponse({
+      ok: true,
+      match_id: matchId,
+      offer_id: offerId,
+      status: "CONFIRMED",
+      message: "오퍼가 정상 수락되어 매칭이 확정되었습니다."
+    }, 200);
+  }
+
+  const matchOfferReject = path.match(/^\/offers\/([a-zA-Z0-9_-]+)\/reject$/);
+  if (matchOfferReject && method === "POST") {
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
+
+    const offerId = matchOfferReject[1];
+    const body = await request.json().catch(() => ({}));
+    const partnerId = body.partner_id;
+    const reason = body.reason || "PARTNER_MANUAL_REJECT";
+    const partnerKey = request.headers.get("X-SBK-Partner-Key") || body.partner_key;
+    const adminKey = request.headers.get("X-SBK-Admin-Key") || body.admin_key;
+
+    if (!partnerId) {
+      return errorResponse("PARTNER_ID_REQUIRED", "partner_id가 필요합니다.", 400);
+    }
+
+    const offer = await env.DB.prepare("SELECT * FROM assignment_offers WHERE id = ?").bind(offerId).first();
+    if (!offer) {
+      return errorResponse("OFFER_NOT_FOUND", "해당 오퍼를 찾을 수 없습니다.", 404);
+    }
+
+    const partner = await env.DB.prepare("SELECT id, business_number FROM partners WHERE id = ?").bind(partnerId).first();
+    const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
+    const isOwner = partner && partnerKey && (partnerKey === partner.business_number || partnerKey === env.SBK_ATTRIBUTION_SECRET);
+
+    if (offer.partner_id !== partnerId || (!isAdmin && !isOwner)) {
+      return errorResponse("FORBIDDEN", "본인에게 배정된 오퍼만 거절할 수 있습니다.", 403);
+    }
+
+    if (offer.status !== "PENDING") {
+      return errorResponse("ALREADY_PROCESSED", `오퍼가 이미 ${offer.status} 상태입니다.`, 409);
+    }
+
+    const nowIso = new Date().toISOString();
+    await env.DB.prepare("UPDATE assignment_offers SET status = 'REJECTED', updated_at = ? WHERE id = ? AND status = 'PENDING'").bind(nowIso, offerId).run();
+    await env.DB.prepare("UPDATE capacity_slots SET status = 'AVAILABLE', updated_at = ? WHERE id = ?").bind(nowIso, offer.slot_id).run();
+    await env.DB.prepare(
+      "INSERT INTO partner_responses (id, offer_id, partner_id, response_type, rejection_reason, responded_at) VALUES (?, ?, ?, 'REJECT', ?, ?)"
+    ).bind("resp_" + crypto.randomUUID(), offerId, partnerId, reason, nowIso).run();
+
+    await env.DB.prepare("UPDATE inquiries SET status = 'PENDING_MATCH', updated_at = ? WHERE id = ?").bind(nowIso, offer.inquiry_id).run();
+
+    // Trigger sequential re-routing to Rank 2
+    const nextOffer = await dispatchCandidateOffer(offer.inquiry_id, env);
+
+    return jsonResponse({
+      ok: true,
+      offer_id: offerId,
+      status: "REJECTED",
+      reassigned_offer: nextOffer,
+      message: "오퍼가 거절되었으며 다음 순위 파트너로 자동 재배정됩니다."
+    }, 200);
   }
 
   // 6. Match Fulfillment: POST /matches/:id/fulfill (SBK-FIX-06: Two-Way Verification Gateway)
