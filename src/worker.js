@@ -680,6 +680,216 @@ async function handleApiRequest(request, url, env) {
     }
   }
 
+  // 5.1 Capacity Slots: GET /slots, POST /slots, DELETE /slots/:id (SBK-MINI-07)
+  if (path === "/slots" && method === "GET") {
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
+
+    const partnerId = url.searchParams.get("partner_id");
+    if (!partnerId) {
+      return errorResponse("PARTNER_ID_REQUIRED", "partner_id 파라미터가 필요합니다.", 400);
+    }
+
+    const partner = await env.DB.prepare(
+      "SELECT id, business_number, verification_status FROM partners WHERE id = ?"
+    ).bind(partnerId).first();
+    if (!partner) {
+      return errorResponse("PARTNER_NOT_FOUND", "파트너 정보를 찾을 수 없습니다.", 404);
+    }
+
+    // Auth & Ownership Check
+    const partnerKey = request.headers.get("X-SBK-Partner-Key") || url.searchParams.get("partner_key");
+    const adminKey = request.headers.get("X-SBK-Admin-Key") || url.searchParams.get("admin_key");
+    const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
+    const isOwner = partnerKey && (partnerKey === partner.business_number || partnerKey === env.SBK_ATTRIBUTION_SECRET);
+
+    if (!isAdmin && !isOwner) {
+      return errorResponse("FORBIDDEN", "본인 소유의 파트너 슬롯만 조회할 수 있습니다.", 403);
+    }
+
+    const rows = await env.DB.prepare(
+      "SELECT * FROM capacity_slots WHERE partner_id = ? AND status != 'CANCELLED' ORDER BY slot_date ASC, time_window ASC"
+    ).bind(partnerId).all();
+
+    return jsonResponse({
+      ok: true,
+      partner_id: partnerId,
+      slots: rows.results || []
+    });
+  }
+
+  if (path === "/slots" && method === "POST") {
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
+
+    try {
+      const body = await request.json();
+      const partnerId = body.partner_id;
+      const slotDate = (body.slot_date || "").trim();
+      const timeWindow = body.time_window || "MORNING";
+      const maxCapacity = Number(body.max_capacity) || 1;
+
+      if (!partnerId) {
+        return errorResponse("PARTNER_ID_REQUIRED", "partner_id가 필요합니다.", 400);
+      }
+      if (!slotDate || !/^\d{4}-\d{2}-\d{2}$/.test(slotDate)) {
+        return errorResponse("INVALID_DATE", "slot_date는 YYYY-MM-DD 형식이어야 합니다.", 400);
+      }
+      if (!["MORNING", "AFTERNOON", "ALL_DAY"].includes(timeWindow)) {
+        return errorResponse("INVALID_TIME_WINDOW", "time_window는 MORNING, AFTERNOON, ALL_DAY 중 하나여야 합니다.", 400);
+      }
+
+      const partner = await env.DB.prepare(
+        "SELECT id, business_number, verification_status FROM partners WHERE id = ?"
+      ).bind(partnerId).first();
+      if (!partner) {
+        return errorResponse("PARTNER_NOT_FOUND", "파트너 정보를 찾을 수 없습니다.", 404);
+      }
+
+      // Check partner approval status (B06 defense)
+      if (partner.verification_status !== "APPROVED") {
+        return errorResponse("UNAPPROVED_PARTNER", "관리자 서류 심사가 완료된 승인 파트너만 가용 슬롯을 등록할 수 있습니다.", 403);
+      }
+
+      // Auth & Ownership Check
+      const partnerKey = request.headers.get("X-SBK-Partner-Key") || body.partner_key;
+      const adminKey = request.headers.get("X-SBK-Admin-Key") || body.admin_key;
+      const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
+      const isOwner = partnerKey && (partnerKey === partner.business_number || partnerKey === env.SBK_ATTRIBUTION_SECRET);
+
+      if (!isAdmin && !isOwner) {
+        return errorResponse("FORBIDDEN", "본인 소유의 파트너 계정만 슬롯을 등록할 수 있습니다.", 403);
+      }
+
+      // KST 24~72h window validation
+      const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
+      const todayKstStr = kstNow.toISOString().split("T")[0];
+      const todayKstMs = new Date(todayKstStr + "T00:00:00+09:00").getTime();
+      const slotDateMs = new Date(slotDate + "T00:00:00+09:00").getTime();
+      const diffDays = Math.round((slotDateMs - todayKstMs) / (24 * 3600 * 1000));
+      if (diffDays < 1 || diffDays > 4) {
+        return errorResponse("OUT_OF_RUSH_WINDOW", "급행 슬롯은 24~72시간 이내(내일~4일 이내)만 등록 가능합니다.", 400);
+      }
+
+      // Conflict / Overlap check (1 Team 1 Job / 409 Conflict)
+      if (timeWindow === "ALL_DAY") {
+        const overlapping = await env.DB.prepare(
+          "SELECT id, time_window, status FROM capacity_slots WHERE partner_id = ? AND slot_date = ? AND status IN ('AVAILABLE', 'OFFERED', 'RESERVED')"
+        ).bind(partnerId, slotDate).first();
+        if (overlapping) {
+          return errorResponse("SLOT_DUPLICATE", `해당 일시(${slotDate})에 이미 ${overlapping.time_window} 슬롯이 존재하여 종일(ALL_DAY) 슬롯을 등록할 수 없습니다.`, 409);
+        }
+      } else {
+        const overlapping = await env.DB.prepare(
+          "SELECT id, time_window, status FROM capacity_slots WHERE partner_id = ? AND slot_date = ? AND (time_window = ? OR time_window = 'ALL_DAY') AND status IN ('AVAILABLE', 'OFFERED', 'RESERVED')"
+        ).bind(partnerId, slotDate, timeWindow).first();
+        if (overlapping) {
+          return errorResponse("SLOT_DUPLICATE", `해당 일시(${slotDate})에 이미 ${overlapping.time_window} 슬롯이 존재하여 중복/충돌 등록할 수 없습니다.`, 409);
+        }
+      }
+
+      // Check if re-activating previously cancelled slot
+      const existingSlot = await env.DB.prepare(
+        "SELECT id, status FROM capacity_slots WHERE partner_id = ? AND slot_date = ? AND time_window = ?"
+      ).bind(partnerId, slotDate, timeWindow).first();
+
+      const nowIso = new Date().toISOString();
+      if (existingSlot && existingSlot.status === "CANCELLED") {
+        await env.DB.prepare(
+          "UPDATE capacity_slots SET status = 'AVAILABLE', updated_at = ? WHERE id = ?"
+        ).bind(nowIso, existingSlot.id).run();
+        return jsonResponse({
+          ok: true,
+          slot_id: existingSlot.id,
+          partner_id: partnerId,
+          slot_date: slotDate,
+          time_window: timeWindow,
+          status: "AVAILABLE",
+          message: "취소되었던 슬롯이 재활성화되었습니다."
+        }, 200);
+      }
+
+      const slotId = "slot_" + crypto.randomUUID();
+      await env.DB.prepare(
+        `INSERT INTO capacity_slots (id, partner_id, slot_date, time_window, max_capacity, allocated_count, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 0, 'AVAILABLE', ?, ?)`
+      ).bind(slotId, partnerId, slotDate, timeWindow, maxCapacity, nowIso, nowIso).run();
+
+      await env.DB.prepare(
+        `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+        VALUES (?, ?, 'SLOT_CREATED', 'SLOT', ?, ?, ?)`
+      ).bind(
+        "aud_" + crypto.randomUUID(),
+        partnerId,
+        slotId,
+        JSON.stringify({ slot_date: slotDate, time_window: timeWindow }),
+        nowIso
+      ).run();
+
+      return jsonResponse({
+        ok: true,
+        slot_id: slotId,
+        partner_id: partnerId,
+        slot_date: slotDate,
+        time_window: timeWindow,
+        status: "AVAILABLE",
+        message: "가용 슬롯이 D1에 정상 등록되었습니다."
+      }, 201);
+    } catch (err) {
+      return errorResponse("SERVER_ERROR", err.message, 500);
+    }
+  }
+
+  const matchSlotDelete = path.match(/^\/slots\/([a-zA-Z0-9_-]+)$/);
+  if (matchSlotDelete && method === "DELETE") {
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
+
+    const slotId = matchSlotDelete[1];
+    const partnerKey = request.headers.get("X-SBK-Partner-Key") || url.searchParams.get("partner_key");
+    const adminKey = request.headers.get("X-SBK-Admin-Key") || url.searchParams.get("admin_key");
+
+    const slot = await env.DB.prepare("SELECT * FROM capacity_slots WHERE id = ?").bind(slotId).first();
+    if (!slot) {
+      return errorResponse("SLOT_NOT_FOUND", "해당 슬롯을 찾을 수 없습니다.", 404);
+    }
+
+    const partner = await env.DB.prepare("SELECT id, business_number FROM partners WHERE id = ?").bind(slot.partner_id).first();
+    const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
+    const isOwner = partner && partnerKey && (partnerKey === partner.business_number || partnerKey === env.SBK_ATTRIBUTION_SECRET);
+
+    if (!isAdmin && !isOwner) {
+      return errorResponse("FORBIDDEN", "본인 소유의 슬롯만 취소할 수 있습니다.", 403);
+    }
+
+    if (slot.status !== "AVAILABLE") {
+      return errorResponse("SLOT_CANNOT_DELETE", `현재 ${slot.status} 상태인 슬롯은 삭제/취소할 수 없습니다.`, 409);
+    }
+
+    const nowIso = new Date().toISOString();
+    await env.DB.prepare(
+      "UPDATE capacity_slots SET status = 'CANCELLED', updated_at = ? WHERE id = ?"
+    ).bind(nowIso, slotId).run();
+
+    await env.DB.prepare(
+      `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+      VALUES (?, ?, 'SLOT_CANCELLED', 'SLOT', ?, ?, ?)`
+    ).bind(
+      "aud_" + crypto.randomUUID(),
+      slot.partner_id,
+      slotId,
+      JSON.stringify({ reason: "PARTNER_WITHDRAWAL" }),
+      nowIso
+    ).run();
+
+    return jsonResponse({
+      ok: true,
+      slot_id: slotId,
+      status: "CANCELLED",
+      message: "가용 슬롯이 성공적으로 취소되었습니다."
+    });
+  }
+
   // 6. Match Fulfillment: POST /matches/:id/fulfill (SBK-FIX-06: Two-Way Verification Gateway)
   const matchFulfill = path.match(/^\/matches\/([a-zA-Z0-9_-]+)\/fulfill$/);
   if (matchFulfill && method === "POST") {

@@ -257,10 +257,35 @@
       }
     }
 
-    function addSlot() {
+    async function addSlot() {
       const d = document.getElementById('new-slot-date').value;
       const w = document.getElementById('new-slot-window').value;
-      alert(`[데모 모드]\n슬롯 등록 시뮬레이션: ${d} [${w}]\n실제 D1 데이터베이스 연동 전이므로 서버에 저장되지 않습니다.`);
+      const partnerId = 'partner_sl_master';
+      const partnerKey = '1234567890';
+
+      try {
+        const res = await fetch('/api/v1/slotbridge/slots', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-SBK-Partner-Key': partnerKey
+          },
+          body: JSON.stringify({
+            partner_id: partnerId,
+            slot_date: d,
+            time_window: w
+          })
+        });
+        const data = await res.json();
+        if (res.ok && data.slot_id) {
+          alert(`가용 슬롯이 D1에 정상 등록되었습니다: ${d} [${w}] (ID: ${data.slot_id})`);
+          location.reload();
+        } else {
+          alert('슬롯 등록 안내: ' + (data.error?.message || '처리 중 오류가 발생했습니다.'));
+        }
+      } catch (err) {
+        alert('서버와 통신할 수 없습니다.');
+      }
     }
   </script>
 </body>
