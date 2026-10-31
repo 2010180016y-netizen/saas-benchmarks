@@ -271,6 +271,31 @@ async function handleApiRequest(request, url, env) {
       return errorResponse("PARTNER_ID_REQUIRED", "partner_id 파라미터가 필요합니다.", 400);
     }
 
+    // SBK-MINI-05: Block unauthenticated public token generation (anti-impersonation)
+    const adminKey = request.headers.get("X-SBK-Admin-Key") || url.searchParams.get("admin_key");
+    const partnerKey = request.headers.get("X-SBK-Partner-Key") || url.searchParams.get("partner_key");
+    const expectedAdminKey = env.SBK_ADMIN_KEY;
+
+    let isAuthorized = false;
+    if (expectedAdminKey && adminKey === expectedAdminKey) {
+      isAuthorized = true;
+    } else if (partnerKey) {
+      const partnerRow = await env.DB.prepare(
+        "SELECT id, business_number FROM partners WHERE id = ?"
+      ).bind(partnerId).first();
+      if (partnerRow && (partnerKey === partnerRow.business_number || partnerKey === env.SBK_ATTRIBUTION_SECRET)) {
+        isAuthorized = true;
+      }
+    }
+
+    if (!isAuthorized) {
+      return errorResponse(
+        "UNAUTHORIZED",
+        "공개 토큰 발급이 차단되었습니다. 파트너 인증 키(X-SBK-Partner-Key) 또는 관리자 권한이 필요합니다.",
+        401
+      );
+    }
+
     const partner = await env.DB.prepare(
       "SELECT id, verification_status FROM partners WHERE id = ?"
     ).bind(partnerId).first();
@@ -344,12 +369,25 @@ async function handleApiRequest(request, url, env) {
       const requestedDate = body.requested_date;
       const timeWindow = body.requested_time_window || "MORNING";
       
-      // SBK-FIX-03: Attribution verification (B05 defense)
+      // SBK-FIX-03 & SBK-MINI-05: Attribution verification & anti-spoofing
       let attributionPartnerId = null;
       if (body.attribution_token) {
         const verified = await verifyAttributionToken(body.attribution_token, env);
         if (verified && verified.partnerId) {
-          attributionPartnerId = verified.partnerId;
+          // Anti-spoofing: If attribution_partner_id is passed, it MUST match token's partnerId
+          if (body.attribution_partner_id && body.attribution_partner_id !== verified.partnerId) {
+            attributionPartnerId = null; // Mismatched / spoofed partner ID rejected
+          } else {
+            // Verify partner exists and is APPROVED in D1
+            const p = await env.DB.prepare(
+              "SELECT id, verification_status FROM partners WHERE id = ?"
+            ).bind(verified.partnerId).first();
+            if (p && ["APPROVED", "VERIFIED"].includes(p.verification_status)) {
+              attributionPartnerId = verified.partnerId;
+            } else {
+              attributionPartnerId = null; // Unapproved / inactive partner rejected
+            }
+          }
         }
       }
 

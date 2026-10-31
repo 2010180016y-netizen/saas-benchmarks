@@ -163,6 +163,7 @@
     <div class="card">
       <form id="inquiry-form">
         <input type="hidden" id="attribution_partner_id" value="">
+        <input type="hidden" id="attribution_token" value="">
 
         <div class="form-group">
           <label>1. 청소 희망 일시 (24~72시간 이내)</label>
@@ -314,6 +315,9 @@
     if (params.get('ref')) {
       document.getElementById('attribution_partner_id').value = params.get('ref');
     }
+    if (params.get('token')) {
+      document.getElementById('attribution_token').value = params.get('token');
+    }
 
     // 6. Form Submission (SBK-FIX-02: Real API Integration with Demo Fallback)
     document.getElementById('inquiry-form').addEventListener('submit', async function(e) {
@@ -347,7 +351,8 @@
         agreed_privacy_collection: col,
         agreed_third_party_share: share,
         agreed_marketing: document.getElementById('agreed_marketing').checked,
-        attribution_partner_id: document.getElementById('attribution_partner_id').value || null
+        attribution_partner_id: document.getElementById('attribution_partner_id').value || null,
+        attribution_token: document.getElementById('attribution_token').value || null
       };
 
       try {
@@ -361,10 +366,10 @@
           window.location.href = `status.html?token=${data.status_token}&date=${encodeURIComponent(payload.requested_date)}&dist=${encodeURIComponent(payload.district)}`;
           return;
         } else {
-          alert('신청 접수 안내: ' + (data.error?.message || '데모 모드로 전환합니다.'));
+          alert('신청 접수 안내: ' + (data.error?.message || '접수 처리 중 오류가 발생했습니다.'));
         }
       } catch (err) {
-        console.warn('API fetch offline, falling back to honest demo:', err);
+        console.warn('API fetch offline:', err);
       }
 
       // Honest Demo Fallback

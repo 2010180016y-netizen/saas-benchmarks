@@ -113,20 +113,27 @@
   btn.textContent = '관내 잔여 급행 슬롯 조회하기 (무료)';
   btn.href = baseUrl + '/slotbridge/inquiry.html?ref=' + encodeURIComponent(partnerId);
 
-  // Asynchronously request cryptographically signed attribution token from server
-  try {
-    var tokenEndpoint = baseUrl + '/api/v1/slotbridge/attribution/token?partner_id=' + encodeURIComponent(partnerId);
-    fetch(tokenEndpoint)
-      .then(function (res) { return res.json(); })
-      .then(function (data) {
-        if (data && data.ok && data.token) {
-          btn.href = baseUrl + '/slotbridge/inquiry.html?ref=' + encodeURIComponent(partnerId) + '&token=' + encodeURIComponent(data.token);
-        }
-      })
-      .catch(function () {
-        // Fallback gracefully without breaking UI
-      });
-  } catch (e) {}
+  var partnerToken = currentScript.getAttribute('data-token') || '';
+  var partnerKey = currentScript.getAttribute('data-partner-key') || '';
+
+  if (partnerToken) {
+    btn.href = baseUrl + '/slotbridge/inquiry.html?ref=' + encodeURIComponent(partnerId) + '&token=' + encodeURIComponent(partnerToken);
+  } else if (partnerKey) {
+    // Authenticated request for signed attribution token from server
+    try {
+      var tokenEndpoint = baseUrl + '/api/v1/slotbridge/attribution/token?partner_id=' + encodeURIComponent(partnerId) + '&partner_key=' + encodeURIComponent(partnerKey);
+      fetch(tokenEndpoint)
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          if (data && data.ok && data.token) {
+            btn.href = baseUrl + '/slotbridge/inquiry.html?ref=' + encodeURIComponent(partnerId) + '&token=' + encodeURIComponent(data.token);
+          }
+        })
+        .catch(function () {
+          // Fallback gracefully without breaking UI
+        });
+    } catch (e) {}
+  }
 
   card.appendChild(btn);
 
