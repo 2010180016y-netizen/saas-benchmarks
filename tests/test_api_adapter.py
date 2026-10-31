@@ -9,6 +9,7 @@ import sqlite3
 import json
 import uuid
 import re
+import hashlib
 from datetime import datetime, timezone
 
 def mask_phone(phone: str) -> str:
@@ -82,6 +83,8 @@ class EdgeWorkerMockRouter:
             now_iso = datetime.now(timezone.utc).isoformat()
             expires_at = datetime.now(timezone.utc).isoformat()
 
+            phone_clean = phone.replace("-", "")
+            phone_hash = hashlib.sha256(("SBK_PHONE_HASH_V1:" + phone_clean).encode()).hexdigest()
             self.db.execute(
                 """
                 INSERT INTO inquiries (
@@ -94,7 +97,7 @@ class EdgeWorkerMockRouter:
                     inquiry_id, tracking_token, dist, body.get("neighborhood", "봉천동"),
                     body.get("housing_type", "STUDIO"), body.get("area_pyeong", 8),
                     body.get("requested_date", "2026-11-01"), body.get("requested_time_window", "MORNING"),
-                    f"ENC_{name}", f"ENC_{phone}", phone.replace("-", ""),
+                    f"ENC_{name}", f"ENC_{phone}", phone_hash,
                     expires_at, now_iso, now_iso
                 )
             )
@@ -125,13 +128,14 @@ class EdgeWorkerMockRouter:
             row = self.db.execute("SELECT * FROM inquiries WHERE tracking_token = ?", (token,)).fetchone()
             if not row:
                 return 404, {"ok": False, "error": {"code": "INQUIRY_NOT_FOUND", "message": "미존재"}}
+            masked = "010-****-5432" if not row["customer_phone_encrypted"].startswith("ERASED_") else "파기됨(Tombstone)"
             return 200, {
                 "ok": True,
                 "inquiry_id": row["id"],
                 "tracking_token": row["tracking_token"],
                 "status": row["status"],
                 "district": row["district"],
-                "masked_phone": mask_phone(row["customer_phone_hash"])
+                "masked_phone": masked
             }
 
         # 4. Inquiry Revoke DELETE

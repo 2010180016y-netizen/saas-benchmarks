@@ -76,6 +76,50 @@ async function encryptPii(plaintext, env) {
   return btoa(String.fromCharCode(...combined));
 }
 
+async function decryptPii(encoded, env) {
+  if (!encoded || encoded.startsWith("ERASED_")) return "";
+  const key = await getCryptoKey(env);
+  const binary = atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  if (bytes[0] !== 0x02 || bytes.length < 13 + 16) {
+    throw new Error("INVALID_CIPHERTEXT_FORMAT");
+  }
+  const iv = bytes.slice(1, 13);
+  const ciphertext = bytes.slice(13);
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv, additionalData: new Uint8Array([0x02]) },
+    key,
+    ciphertext
+  );
+  return new TextDecoder().decode(decrypted);
+}
+
+async function hashPhoneNumber(phone, env) {
+  const clean = (phone || "").replace(/[^0-9]/g, "");
+  if (!clean) return "";
+  const secret = env.SBK_ENCRYPTION_KEY;
+  if (!secret || typeof secret !== "string" || secret.trim().length === 0) {
+    const err = new Error("MISSING_ENCRYPTION_KEY: Secret required for phone hashing (Fail-Closed).");
+    err.status = 503;
+    throw err;
+  }
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sigBuffer = await crypto.subtle.sign("HMAC", key, enc.encode("SBK_PHONE_HASH_V1:" + clean));
+  return Array.from(new Uint8Array(sigBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 async function verifyAttributionToken(token, env) {
   if (!token || token.split(":").length !== 4) return null;
   const [partnerId, campaignId, expStr, sig] = token.split(":");
@@ -309,11 +353,12 @@ async function handleApiRequest(request, url, env) {
         }
       }
 
-      // SBK-FIX-03: AES-256-GCM Encryption (B04 defense)
-      let encName, encPhone;
+      // SBK-FIX-03 & SBK-MINI-04: AES-256-GCM Encryption & HMAC-SHA256 Phone Hashing
+      let encName, encPhone, phoneHash;
       try {
         encName = await encryptPii(name, env);
         encPhone = await encryptPii(phone, env);
+        phoneHash = await hashPhoneNumber(phone, env);
       } catch (err) {
         return errorResponse("ENCRYPTION_FAILED", err.message || "암호화 실패 (Fail-Closed)", err.status || 503);
       }
@@ -342,7 +387,7 @@ async function handleApiRequest(request, url, env) {
           timeWindow,
           encName,
           encPhone,
-          phone.replace(/[^0-9]/g, ""),
+          phoneHash,
           attributionPartnerId,
           expiresAt,
           nowIso,
@@ -350,13 +395,25 @@ async function handleApiRequest(request, url, env) {
         )
         .run();
 
+      // Real client IP hash & user agent capture (no fake constants)
+      const rawIp = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "";
+      let clientIpHash = "NOT_COLLECTED";
+      if (rawIp) {
+        const enc = new TextEncoder();
+        const ipBytes = await crypto.subtle.digest("SHA-256", enc.encode("SBK_IP_SALT:" + rawIp));
+        clientIpHash = Array.from(new Uint8Array(ipBytes))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+      }
+      const userAgent = (request.headers.get("User-Agent") || "NOT_COLLECTED").slice(0, 255);
+
       // Record Consent Event
       await env.DB.prepare(
         `INSERT INTO consent_events (
           id, inquiry_id, terms_version, agreed_privacy_collection, agreed_third_party_share, agreed_marketing, client_ip_hash, user_agent, consented_at
-        ) VALUES (?, ?, 'v1.0-20261031', 1, 1, ?, 'hash_cf_worker', 'CloudflareEdge', ?)`
+        ) VALUES (?, ?, 'v1.0-20261031', 1, 1, ?, ?, ?, ?)`
       )
-        .bind("cst_" + crypto.randomUUID(), inquiryId, body.agreed_marketing ? 1 : 0, nowIso)
+        .bind("cst_" + crypto.randomUUID(), inquiryId, body.agreed_marketing ? 1 : 0, clientIpHash, userAgent, nowIso)
         .run();
 
       return jsonResponse(
@@ -394,6 +451,18 @@ async function handleApiRequest(request, url, env) {
     if (!row) {
       return errorResponse("INQUIRY_NOT_FOUND", "신청 내역을 찾을 수 없습니다.", 404);
     }
+    let maskedPhone = "010-****-****";
+    try {
+      if (row.customer_phone_encrypted && !row.customer_phone_encrypted.startsWith("ERASED_")) {
+        const rawPhone = await decryptPii(row.customer_phone_encrypted, env);
+        maskedPhone = maskPhone(rawPhone);
+      } else {
+        maskedPhone = "파기됨(Tombstone)";
+      }
+    } catch (e) {
+      maskedPhone = "010-****-****";
+    }
+
     return jsonResponse({
       ok: true,
       inquiry_id: row.id,
@@ -405,7 +474,7 @@ async function handleApiRequest(request, url, env) {
       area_pyeong: row.area_pyeong,
       requested_date: row.requested_date,
       time_window: row.time_window,
-      masked_phone: maskPhone(row.customer_phone_hash || "01000000000"),
+      masked_phone: maskedPhone,
       created_at: row.created_at,
     });
   }
@@ -423,16 +492,17 @@ async function handleApiRequest(request, url, env) {
       return errorResponse("INQUIRY_NOT_FOUND", "신청 내역을 찾을 수 없습니다.", 404);
     }
 
+    const tombstoneId = "ERASED_" + crypto.randomUUID();
     await env.DB.prepare(
       `UPDATE inquiries SET
         status = 'CANCELLED',
-        customer_name_encrypted = 'ERASED_NAME',
-        customer_phone_encrypted = 'ERASED_PHONE',
-        customer_phone_hash = 'ERASED_HASH',
+        customer_name_encrypted = ?,
+        customer_phone_encrypted = ?,
+        customer_phone_hash = ?,
         updated_at = ?
       WHERE tracking_token = ?`
     )
-      .bind(nowIso, token)
+      .bind(tombstoneId, tombstoneId, tombstoneId, nowIso, token)
       .run();
 
     // Record Audit
