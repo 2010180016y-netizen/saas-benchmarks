@@ -226,8 +226,14 @@ def accept_offer(db: DatabaseManager, offer_id: str, partner_id: str) -> Dict[st
     if slot_res.rowcount == 0:
         raise EngineError("CONCURRENCY_CONFLICT", "슬롯이 이미 다른 요청에 배정되었습니다.", 409)
 
-    # Update offer
-    db.execute("UPDATE assignment_offers SET status = 'ACCEPTED', updated_at = ? WHERE id = ?", (now_iso, offer_id))
+    # Atomic Update offer with condition WHERE status = 'PENDING'
+    offer_cur = db.execute(
+        "UPDATE assignment_offers SET status = 'ACCEPTED', updated_at = ? WHERE id = ? AND status = 'PENDING'",
+        (now_iso, offer_id)
+    )
+    if offer_cur.rowcount == 0:
+        raise EngineError("ALREADY_PROCESSED", "오퍼가 이미 처리되었거나 만료되었습니다.", 409)
+
     # Update inquiry
     db.execute("UPDATE inquiries SET status = 'MATCHED', updated_at = ? WHERE id = ?", (now_iso, offer["inquiry_id"]))
 

@@ -80,14 +80,17 @@ def run_50_case_dry_run(db_path: str = ":memory:"):
 
     # 2. Register Exactly 17 Available Capacity Slots across 3 rush dates
     # (10 for Normal + 5 for Timeout + 2 for Dispute = 17 slots)
+    # Strictly respects 1-Team-1-Job rule without ALL_DAY overlaps
     dates_windows = [
-        (p_f1, d1_str, "MORNING"), (p_f1, d1_str, "AFTERNOON"), (p_f1, d1_str, "ALL_DAY"),
-        (p_f2, d1_str, "MORNING"), (p_f2, d1_str, "AFTERNOON"), (p_f2, d1_str, "ALL_DAY"),
+        (p_f1, d1_str, "MORNING"), (p_f1, d1_str, "AFTERNOON"),
+        (p_f2, d1_str, "MORNING"), (p_f2, d1_str, "AFTERNOON"),
         (p_f3, d1_str, "MORNING"), (p_f3, d1_str, "AFTERNOON"),
-        (p_f1, d2_str, "MORNING"), (p_f1, d2_str, "AFTERNOON"), (p_f1, d2_str, "ALL_DAY"),
+        (p_f1, d2_str, "MORNING"), (p_f1, d2_str, "AFTERNOON"),
         (p_f2, d2_str, "MORNING"), (p_f2, d2_str, "AFTERNOON"),
+        (p_f3, d2_str, "MORNING"), (p_f3, d2_str, "AFTERNOON"),
         (p_f1, d3_str, "MORNING"), (p_f1, d3_str, "AFTERNOON"),
-        (p_f2, d3_str, "MORNING"), (p_f2, d3_str, "AFTERNOON")
+        (p_f2, d3_str, "MORNING"), (p_f2, d3_str, "AFTERNOON"),
+        (p_f3, d3_str, "MORNING")
     ] # Exactly 17 slots!
     for partner, d_str, tw in dates_windows:
         register_capacity_slot(db, partner, d_str, tw)

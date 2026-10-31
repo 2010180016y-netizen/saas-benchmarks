@@ -80,9 +80,20 @@ def transition_state(
 
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-    # Update Entity Status
+    # Update Entity Status atomically (B07 Defense: Enforces actual DB status matches from_state)
     table_name = "inquiries" if entity_type == "INQUIRY" else "matches"
-    db.execute(f"UPDATE {table_name} SET status = ?, updated_at = ? WHERE id = ?", (to_state, now_iso, entity_id))
+    cur = db.execute(
+        f"UPDATE {table_name} SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+        (to_state, now_iso, entity_id, from_state)
+    )
+    if cur.rowcount == 0:
+        actual_row = db.execute(f"SELECT status FROM {table_name} WHERE id = ?", (entity_id,)).fetchone()
+        actual_status = actual_row["status"] if actual_row else "NOT_FOUND"
+        raise EngineError(
+            "STATE_CONFLICT",
+            f"원자적 상태 전이 실패: 현재 상태가 {from_state}가 아닌 {actual_status}입니다.",
+            409
+        )
 
     # Immutable Audit Log
     db.execute(
@@ -149,6 +160,13 @@ def evaluate_and_dispatch_candidates(
 
     for c in candidates:
         partner_id = c["partner_id"]
+
+        # Hard Filter 0: Time Window match (MORNING / AFTERNOON / ALL_DAY)
+        req_window = inq["time_window"] if ("time_window" in inq.keys() and inq["time_window"]) else "MORNING"
+        slot_window = c["time_window"] if ("time_window" in c.keys() and c["time_window"]) else "MORNING"
+        if req_window != "ALL_DAY" and slot_window != "ALL_DAY" and slot_window != req_window:
+            decision_log.append({"partner_id": partner_id, "passed": False, "reason": "TIME_WINDOW_MISMATCH"})
+            continue
         
         # Hard Filter 1: Approved partner
         if c["verification_status"] != "APPROVED":
@@ -211,15 +229,28 @@ def evaluate_and_dispatch_candidates(
 
     # Sort deterministically by score DESC
     qualified_candidates.sort(key=lambda x: x["score"], reverse=True)
-    winner = qualified_candidates[0]
+    
+    # Atomic Slot Locking (Anti-Race Condition: Locks first available candidate)
+    winner = None
+    for cand in qualified_candidates:
+        cur = db.execute(
+            "UPDATE capacity_slots SET status = 'OFFERED', updated_at = ? WHERE id = ? AND status = 'AVAILABLE'",
+            (now_iso, cand["slot_id"])
+        )
+        if cur.rowcount > 0:
+            winner = cand
+            break
+
+    if not winner:
+        # All candidate slots were concurrently locked by other requests
+        db.commit()
+        return None
 
     # Create 1:1 Exclusive Offer with TTL
     offer_id = f"off_{uuid.uuid4()}"
     now_dt = datetime.now(timezone.utc)
     expires_at = (now_dt + timedelta(minutes=ttl_minutes)).isoformat()
 
-    # Lock slot to OFFERED
-    db.execute("UPDATE capacity_slots SET status = 'OFFERED', updated_at = ? WHERE id = ?", (now_iso, winner["slot_id"]))
     # Set inquiry to OFFERED
     db.execute("UPDATE inquiries SET status = 'OFFERED', updated_at = ? WHERE id = ?", (now_iso, inquiry_id))
 
@@ -282,6 +313,32 @@ def handle_timeout_or_rejection(
     # 5. Sequentially Dispatch to Next Rank Candidate
     next_offer = evaluate_and_dispatch_candidates(db, offer["inquiry_id"])
     return next_offer
+
+def process_expired_offers(db: DatabaseManager) -> List[Dict[str, Any]]:
+    """
+    Scans and expires unaccepted offers past their 15-minute TTL,
+    frees slots back to AVAILABLE, and triggers sequential re-routing (B12).
+    Zero abandoned offers policy.
+    """
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    expired_offers = db.execute(
+        """
+        SELECT id, inquiry_id, partner_id, slot_id
+        FROM assignment_offers
+        WHERE status = 'PENDING' AND expires_at < ?
+        """,
+        (now_iso,)
+    ).fetchall()
+
+    results = []
+    for off in expired_offers:
+        next_offer = handle_timeout_or_rejection(db, off["id"], action="TIMEOUT", reason="15_MIN_SLA_EXPIRED")
+        results.append({
+            "expired_offer_id": off["id"],
+            "inquiry_id": off["inquiry_id"],
+            "reassigned_offer": next_offer
+        })
+    return results
 
 def raise_dispute(
     db: DatabaseManager,

@@ -387,7 +387,7 @@ async function handleApiRequest(request, url, env) {
           `INSERT INTO partners (
             id, organization_id, name, partner_type, business_number, representative_name, contact_phone,
             verification_status, liability_insurance_status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING_APPROVAL', 'PENDING', ?, ?)`
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING_APPROVAL', 'PENDING_VERIFICATION', ?, ?)`
         )
           .bind(partnerId, orgId, name, partnerType, bizNum, rep, phone, nowIso, nowIso)
           .run();
@@ -433,6 +433,35 @@ async function handleApiRequest(request, url, env) {
       }
       return jsonResponse({ ok: true, payouts: [], demo_mode: true });
     }
+  }
+
+  // 7. Cron Trigger: Process 15-minute offer timeouts & auto-reassignment (B12)
+  if (path === "/cron/process-timeouts" && method === "POST") {
+    if (!env.DB) {
+      return jsonResponse({ ok: true, processed_count: 0, message: "D1 not bound (mock)" });
+    }
+    const nowIso = new Date().toISOString();
+    const expiredOffers = await env.DB.prepare(
+      "SELECT id, inquiry_id, slot_id FROM assignment_offers WHERE status = 'PENDING' AND expires_at < ?"
+    ).bind(nowIso).all();
+
+    let processed = 0;
+    for (const off of (expiredOffers.results || [])) {
+      await env.DB.prepare(
+        "UPDATE assignment_offers SET status = 'EXPIRED', updated_at = ? WHERE id = ? AND status = 'PENDING'"
+      ).bind(nowIso, off.id).run();
+
+      await env.DB.prepare(
+        "UPDATE capacity_slots SET status = 'AVAILABLE', updated_at = ? WHERE id = ?"
+      ).bind(nowIso, off.slot_id).run();
+
+      await env.DB.prepare(
+        "UPDATE inquiries SET status = 'PENDING_MATCH', updated_at = ? WHERE id = ?"
+      ).bind(nowIso, off.inquiry_id).run();
+      processed++;
+    }
+
+    return jsonResponse({ ok: true, processed_count: processed, timestamp: nowIso });
   }
 
   return errorResponse("NOT_FOUND", `존재하지 않는 엔드포인트입니다: ${path}`, 404);

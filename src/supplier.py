@@ -56,8 +56,10 @@ def apply_partner(db: DatabaseManager, data: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     # 2. Create Partner in PENDING_APPROVAL status
+    # Statutory Rule (B06): Merely entering a policy number string does NOT verify insurance.
+    # Insurance status remains PENDING_VERIFICATION until manual verification of certificate document.
     insurance_policy = data.get("liability_insurance_policy_number")
-    insurance_status = "VERIFIED" if insurance_policy else "PENDING"
+    insurance_status = "PENDING_VERIFICATION"
 
     db.execute(
         """
@@ -103,34 +105,45 @@ def apply_partner(db: DatabaseManager, data: Dict[str, Any]) -> Dict[str, Any]:
         "message": "파트너 신청이 완료되었습니다. 관리자 서류 심사(24시간 이내) 후 승인됩니다."
     }
 
-def approve_partner(db: DatabaseManager, partner_id: str, admin_id: str = "ADMIN_HOEGI") -> Dict[str, Any]:
+def approve_partner(
+    db: DatabaseManager,
+    partner_id: str,
+    admin_id: str = "ADMIN_HOEGI",
+    insurance_verified: bool = True
+) -> Dict[str, Any]:
     """Admin approves partner after reviewing business registration and insurance."""
     partner = db.execute("SELECT * FROM partners WHERE id = ?", (partner_id,)).fetchone()
     if not partner:
         raise EngineError("PARTNER_NOT_FOUND", "파트너를 찾을 수 없습니다.", 404)
 
     now_iso = datetime.now(timezone.utc).isoformat()
+    ins_status = "VERIFIED" if insurance_verified else "PENDING_VERIFICATION"
+
     db.execute(
-        "UPDATE partners SET verification_status = 'APPROVED', liability_insurance_status = 'VERIFIED', updated_at = ? WHERE id = ?",
-        (now_iso, partner_id)
+        "UPDATE partners SET verification_status = 'APPROVED', liability_insurance_status = ?, updated_at = ? WHERE id = ?",
+        (ins_status, now_iso, partner_id)
     )
     db.execute(
         """
         INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
-        VALUES (?, ?, 'PARTNER_APPROVED', 'PARTNER', ?, '{"status": "APPROVED"}', ?)
+        VALUES (?, ?, 'PARTNER_APPROVED', 'PARTNER', ?, ?, ?)
         """,
-        (f"aud_{uuid.uuid4()}", admin_id, partner_id, now_iso)
+        (f"aud_{uuid.uuid4()}", admin_id, partner_id, f'{{"status": "APPROVED", "insurance": "{ins_status}"}}', now_iso)
     )
     db.commit()
 
     return {
         "partner_id": partner_id,
         "verification_status": "APPROVED",
-        "message": "파트너 승인이 완료되었습니다. 이제 잔여 슬롯을 등록할 수 있습니다."
+        "liability_insurance_status": ins_status,
+        "message": "파트너 승인 심사가 완료되었습니다."
     }
 
 def suspend_partner(db: DatabaseManager, partner_id: str, reason: str, admin_id: str = "ADMIN_HOEGI") -> Dict[str, Any]:
-    """Suspends partner and immediately cancels all their AVAILABLE capacity slots to prevent dispatch."""
+    """
+    Suspends partner and immediately cancels all their AVAILABLE/OFFERED capacity slots
+    and PENDING assignment offers to prevent dispatch (B06).
+    """
     partner = db.execute("SELECT * FROM partners WHERE id = ?", (partner_id,)).fetchone()
     if not partner:
         raise EngineError("PARTNER_NOT_FOUND", "파트너를 찾을 수 없습니다.", 404)
@@ -138,11 +151,27 @@ def suspend_partner(db: DatabaseManager, partner_id: str, reason: str, admin_id:
     now_iso = datetime.now(timezone.utc).isoformat()
     db.execute("UPDATE partners SET verification_status = 'SUSPENDED', updated_at = ? WHERE id = ?", (now_iso, partner_id))
     
-    # Cancel available slots immediately!
+    # 1. Cancel available and offered capacity slots
     cancelled_slots = db.execute(
-        "UPDATE capacity_slots SET status = 'CANCELLED', updated_at = ? WHERE partner_id = ? AND status = 'AVAILABLE'",
+        "UPDATE capacity_slots SET status = 'CANCELLED', updated_at = ? WHERE partner_id = ? AND status IN ('AVAILABLE', 'OFFERED')",
         (now_iso, partner_id)
     ).rowcount
+
+    # 2. Cancel pending assignment offers for this suspended partner and re-queue inquiries
+    pending_offers = db.execute(
+        "SELECT id, inquiry_id, slot_id FROM assignment_offers WHERE partner_id = ? AND status = 'PENDING'",
+        (partner_id,)
+    ).fetchall()
+    
+    for off in pending_offers:
+        db.execute(
+            "UPDATE assignment_offers SET status = 'CANCELLED', updated_at = ? WHERE id = ?",
+            (now_iso, off["id"])
+        )
+        db.execute(
+            "UPDATE inquiries SET status = 'PENDING_MATCH', updated_at = ? WHERE id = ?",
+            (now_iso, off["inquiry_id"])
+        )
 
     db.execute(
         """
@@ -196,7 +225,38 @@ def register_capacity_slot(
     if slot_date < min_date or slot_date > max_date:
         raise EngineError("OUT_OF_RUSH_WINDOW", f"급행 슬롯은 24~72시간 이내({min_date} ~ {max_date})만 등록 가능합니다.", 400)
 
-    # Check existing slot
+    # Check existing slot conflict (1 Team 1 Job / ALL_DAY overlap prevention)
+    if time_window == "ALL_DAY":
+        overlapping = db.execute(
+            """
+            SELECT id, time_window, status FROM capacity_slots
+            WHERE partner_id = ? AND slot_date = ? AND status IN ('AVAILABLE', 'OFFERED', 'RESERVED')
+            """,
+            (partner_id, slot_date_str)
+        ).fetchone()
+        if overlapping:
+            raise EngineError(
+                "SLOT_DUPLICATE",
+                f"해당 일시({slot_date_str})에 이미 {overlapping['time_window']} 슬롯이 존재하여 종일(ALL_DAY) 슬롯을 등록할 수 없습니다.",
+                409
+            )
+    else:
+        overlapping = db.execute(
+            """
+            SELECT id, time_window, status FROM capacity_slots
+            WHERE partner_id = ? AND slot_date = ? 
+              AND (time_window = ? OR time_window = 'ALL_DAY')
+              AND status IN ('AVAILABLE', 'OFFERED', 'RESERVED')
+            """,
+            (partner_id, slot_date_str, time_window)
+        ).fetchone()
+        if overlapping:
+            raise EngineError(
+                "SLOT_DUPLICATE",
+                f"해당 일시({slot_date_str})에 이미 {overlapping['time_window']} 슬롯이 존재하여 중복/충돌 등록할 수 없습니다.",
+                409
+            )
+
     existing = db.execute(
         "SELECT id, status FROM capacity_slots WHERE partner_id = ? AND slot_date = ? AND time_window = ?",
         (partner_id, slot_date_str, time_window)
