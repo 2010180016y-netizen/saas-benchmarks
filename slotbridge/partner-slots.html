@@ -164,19 +164,19 @@
       <div class="badge-status" style="background:rgba(245, 158, 11, 0.15); color:#fbbf24; border-color:rgba(245, 158, 11, 0.3);">시뮬레이션 모드</div>
     </header>
 
-    <!-- SBK-FIX-01: 정직한 UI 게이트 (시연 포털 안내) -->
+    <!-- SBK-MINI-09: 정직한 알림 및 파트너 웹 폴링 대기함 안내 -->
     <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 12px; color: #fbbf24; line-height: 1.5;">
-      ⚠️ <strong>[시공 파트너 시연 포털]</strong><br>
-      본 화면은 파트너 오퍼 수락 및 슬롯 관리 플로우를 시연하는 데모 페이지입니다. 실제 계약 체결 및 D1 API 연동(FIX-02/04) 전까지는 실제 고객 오더가 연동되지 않습니다.
+      💡 <strong>[실시간 웹 폴링 오퍼 대기함 안내]</strong><br>
+      본 플랫폼은 서버리스 무료 인프라 특성상 실제 SMS 문자를 즉시 발송하지 않으며, 파트너 전용 웹 대기함 폴링을 통해 15분 독점 오퍼를 수신하고 검토·수락합니다.
     </div>
 
-    <!-- 실시간 15분 독점 오퍼 모달 시뮬레이션 -->
-    <div class="modal-offer" id="offer-modal">
+    <!-- 실시간 15분 독점 오퍼 웹 수신함 (폴링 연동) -->
+    <div class="modal-offer" id="offer-modal" style="display:none;">
       <div class="timer-badge">🚨 15분 독점 오퍼 도착 (남은시간: <span id="countdown">14:48</span>)</div>
       <div class="offer-details">
-        • <strong>작업 위치:</strong> 서울 관악구 봉천동 (차고지에서 2.3km)<br>
-        • <strong>주거 형태:</strong> 원룸 8평 (베란다 청소 포함)<br>
-        • <strong>희망 일시:</strong> 내일 오전 10:00 출동<br>
+        • <strong>작업 위치:</strong> <span id="offer-district">서울 관악구 봉천동</span><br>
+        • <strong>주거 형태:</strong> <span id="offer-housing">원룸 8평 (베란다 청소 포함)</span><br>
+        • <strong>희망 일시:</strong> <span id="offer-date">내일 오전 (09:00 ~ 13:00)</span><br>
         • <strong>예상 서비스비:</strong> 230,000 ~ 250,000원 (현장 직접 결제)
       </div>
       <div class="btn-group">
@@ -246,14 +246,73 @@
     dateInput.max = maxDate.toISOString().split('T')[0];
     dateInput.value = dateInput.min;
 
-    function acceptOffer() {
-      alert("[데모 모드]\n시연용 오퍼 수락 시뮬레이션입니다.\n백엔드 API 연동(FIX-02) 전이므로 실제 고객 연락처가 아닙니다.");
-      document.getElementById('offer-modal').style.display = 'none';
+    let currentOfferId = null;
+
+    async function checkPartnerOffers() {
+      const partnerId = 'partner_sl_master';
+      const partnerKey = '1234567890';
+      try {
+        const res = await fetch(`/api/v1/slotbridge/offers?partner_id=${encodeURIComponent(partnerId)}&partner_key=${encodeURIComponent(partnerKey)}`);
+        const data = await res.json();
+        if (res.ok && data.offers && data.offers.length > 0) {
+          const pending = data.offers.find(o => o.status === 'PENDING' && new Date(o.expires_at) > new Date());
+          if (pending) {
+            currentOfferId = pending.id;
+            document.getElementById('offer-modal').style.display = 'block';
+          }
+        }
+      } catch (e) {}
+    }
+    checkPartnerOffers();
+    setInterval(checkPartnerOffers, 10000);
+
+    async function acceptOffer() {
+      if (!currentOfferId) {
+        alert('현재 처리할 유효 오퍼가 없습니다.');
+        return;
+      }
+      const partnerId = 'partner_sl_master';
+      const partnerKey = '1234567890';
+      try {
+        const res = await fetch(`/api/v1/slotbridge/offers/${encodeURIComponent(currentOfferId)}/accept`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-SBK-Partner-Key': partnerKey },
+          body: JSON.stringify({ partner_id: partnerId })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          alert('오퍼를 성공적으로 수락하여 매칭이 확정되었습니다!');
+          location.reload();
+        } else {
+          alert('오퍼 수락 안내: ' + (data.error?.message || '처리할 수 없습니다.'));
+        }
+      } catch (e) {
+        alert('서버와 통신할 수 없습니다.');
+      }
     }
 
-    function rejectOffer() {
-      if (confirm("[데모 모드] 정말 거절 시뮬레이션을 진행하시겠습니까?")) {
-        document.getElementById('offer-modal').style.display = 'none';
+    async function rejectOffer() {
+      if (!currentOfferId) {
+        alert('현재 처리할 유효 오퍼가 없습니다.');
+        return;
+      }
+      const partnerId = 'partner_sl_master';
+      const partnerKey = '1234567890';
+      try {
+        const res = await fetch(`/api/v1/slotbridge/offers/${encodeURIComponent(currentOfferId)}/reject`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-SBK-Partner-Key': partnerKey },
+          body: JSON.stringify({ partner_id: partnerId, reason: 'MANUAL_REJECT' })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          alert('오퍼를 거절했습니다. 차순위 파트너로 자동 재배정됩니다.');
+          location.reload();
+        } else {
+          alert('오퍼 거절 안내: ' + (data.error?.message || '처리할 수 없습니다.'));
+        }
+      } catch (e) {
+        alert('서버와 통신할 수 없습니다.');
       }
     }
 

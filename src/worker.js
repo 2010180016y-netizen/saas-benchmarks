@@ -207,6 +207,15 @@ export default {
 
     return new Response("Not Found", { status: 404 });
   },
+
+  // SBK-MINI-09: Cloudflare Workers Scheduled Cron Handler (5-minute interval)
+  async scheduled(event, env, ctx) {
+    if (ctx && ctx.waitUntil) {
+      ctx.waitUntil(processTimeoutsInternal(env));
+    } else {
+      await processTimeoutsInternal(env);
+    }
+  },
 };
 
 function checkD1Database(env) {
@@ -1377,7 +1386,52 @@ async function handleApiRequest(request, url, env) {
     }
   }
 
-  // 7. Cron Trigger: Process 15-minute offer timeouts & auto-reassignment (B12)
+// SBK-MINI-09: Process 15-minute offer timeouts, free slots, and sequentially re-route to Rank 2
+async function processTimeoutsInternal(env) {
+  if (!env.DB) return { processed_count: 0, reassigned_count: 0 };
+  const nowIso = new Date().toISOString();
+  const expiredOffers = await env.DB.prepare(
+    "SELECT id, inquiry_id, partner_id, slot_id FROM assignment_offers WHERE status = 'PENDING' AND expires_at < ?"
+  ).bind(nowIso).all();
+
+  let processed = 0;
+  let reassigned = 0;
+
+  for (const off of (expiredOffers.results || [])) {
+    // 1. Mark offer as EXPIRED
+    const offerRes = await env.DB.prepare(
+      "UPDATE assignment_offers SET status = 'EXPIRED', updated_at = ? WHERE id = ? AND status = 'PENDING'"
+    ).bind(nowIso, off.id).run();
+    if (!offerRes.meta || offerRes.meta.changes === 0) continue;
+
+    // 2. Free previous partner slot back to AVAILABLE
+    await env.DB.prepare(
+      "UPDATE capacity_slots SET status = 'AVAILABLE', updated_at = ? WHERE id = ?"
+    ).bind(nowIso, off.slot_id).run();
+
+    // 3. Record response TIMEOUT
+    await env.DB.prepare(
+      "INSERT INTO partner_responses (id, offer_id, partner_id, response_type, rejection_reason, responded_at) VALUES (?, ?, ?, 'TIMEOUT', '15_MIN_SLA_EXPIRED', ?)"
+    ).bind("resp_" + crypto.randomUUID(), off.id, off.partner_id, nowIso).run().catch(() => {});
+
+    // 4. Set inquiry status back to PENDING_MATCH
+    await env.DB.prepare(
+      "UPDATE inquiries SET status = 'PENDING_MATCH', updated_at = ? WHERE id = ?"
+    ).bind(nowIso, off.inquiry_id).run();
+
+    processed++;
+
+    // 5. Trigger sequential re-routing to Rank 2 candidate!
+    const nextOffer = await dispatchCandidateOffer(off.inquiry_id, env);
+    if (nextOffer) {
+      reassigned++;
+    }
+  }
+
+  return { processed_count: processed, reassigned_count: reassigned, timestamp: nowIso };
+}
+
+  // 7. Cron Trigger: Process 15-minute offer timeouts & auto-reassignment (B12 & SBK-MINI-09)
   if (path === "/cron/process-timeouts" && method === "POST") {
     const adminKey = request.headers.get("X-SBK-Admin-Key");
     const expectedKey = env.SBK_ADMIN_KEY;
@@ -1387,33 +1441,13 @@ async function handleApiRequest(request, url, env) {
     }
 
     if (!adminKey || adminKey !== expectedKey) {
-      return errorResponse("UNAUTHORIZED", "크론 작업 실행 권한이 없습니다.", 401);
+      return errorResponse("UNAUTHORIZED", "크론 작업 실행 권한이 없습니다. 관리자 인증 키(X-SBK-Admin-Key)가 필요합니다.", 401);
     }
     const dbErr = checkD1Database(env);
     if (dbErr) return dbErr;
 
-    const nowIso = new Date().toISOString();
-    const expiredOffers = await env.DB.prepare(
-      "SELECT id, inquiry_id, slot_id FROM assignment_offers WHERE status = 'PENDING' AND expires_at < ?"
-    ).bind(nowIso).all();
-
-    let processed = 0;
-    for (const off of (expiredOffers.results || [])) {
-      await env.DB.prepare(
-        "UPDATE assignment_offers SET status = 'EXPIRED', updated_at = ? WHERE id = ? AND status = 'PENDING'"
-      ).bind(nowIso, off.id).run();
-
-      await env.DB.prepare(
-        "UPDATE capacity_slots SET status = 'AVAILABLE', updated_at = ? WHERE id = ?"
-      ).bind(nowIso, off.slot_id).run();
-
-      await env.DB.prepare(
-        "UPDATE inquiries SET status = 'PENDING_MATCH', updated_at = ? WHERE id = ?"
-      ).bind(nowIso, off.inquiry_id).run();
-      processed++;
-    }
-
-    return jsonResponse({ ok: true, processed_count: processed, timestamp: nowIso });
+    const result = await processTimeoutsInternal(env);
+    return jsonResponse({ ok: true, ...result });
   }
 
   return errorResponse("NOT_FOUND", `존재하지 않는 엔드포인트입니다: ${path}`, 404);
