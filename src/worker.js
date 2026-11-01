@@ -229,8 +229,8 @@ export default {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
 
-    // Only intercept /api/v1/slotbridge/*
-    if (url.pathname.startsWith("/api/v1/slotbridge")) {
+    // Intercept /api/v1/slotbridge/* as well as top-level /admin/* and /health
+    if (url.pathname.startsWith("/api/v1/slotbridge") || url.pathname.startsWith("/admin") || url.pathname === "/health") {
       return await handleApiRequest(request, url, env);
     }
 
@@ -1023,13 +1023,6 @@ async function handleApiRequest(request, url, env) {
       return errorResponse("PARTNER_ID_REQUIRED", "partner_id 파라미터가 필요합니다.", 400);
     }
 
-    const partner = await env.DB.prepare(
-      "SELECT id, business_number, verification_status FROM partners WHERE id = ?"
-    ).bind(partnerId).first();
-    if (!partner) {
-      return errorResponse("PARTNER_NOT_FOUND", "파트너 정보를 찾을 수 없습니다.", 404);
-    }
-
     // SBK-FIX-A (P0-01): Auth & Ownership Check via secure token header only
     const partnerKey = request.headers.get("X-SBK-Partner-Key");
     const adminKey = request.headers.get("X-SBK-Admin-Key");
@@ -1038,6 +1031,13 @@ async function handleApiRequest(request, url, env) {
 
     if (!isAdmin && !isOwner) {
       return errorResponse("FORBIDDEN", "본인 소유의 파트너 슬롯만 조회할 수 있습니다.", 403);
+    }
+
+    const partner = await env.DB.prepare(
+      "SELECT id, business_number, verification_status FROM partners WHERE id = ?"
+    ).bind(partnerId).first();
+    if (!partner) {
+      return errorResponse("PARTNER_NOT_FOUND", "파트너 정보를 찾을 수 없습니다.", 404);
     }
 
     const rows = await env.DB.prepare(
@@ -1075,6 +1075,16 @@ async function handleApiRequest(request, url, env) {
         return errorResponse("INVALID_TIME_WINDOW", "time_window는 MORNING, AFTERNOON, ALL_DAY 중 하나여야 합니다.", 400);
       }
 
+      // SBK-FIX-A (P0-01): Auth & Ownership Check via secure token header only
+      const partnerKey = request.headers.get("X-SBK-Partner-Key");
+      const adminKey = request.headers.get("X-SBK-Admin-Key");
+      const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
+      const isOwner = partnerKey && (await verifyPartnerAuthToken(partnerKey, partnerId, env));
+
+      if (!isAdmin && !isOwner) {
+        return errorResponse("FORBIDDEN", "본인 소유의 파트너 계정만 슬롯을 등록할 수 있습니다.", 403);
+      }
+
       const partner = await env.DB.prepare(
         "SELECT id, business_number, verification_status FROM partners WHERE id = ?"
       ).bind(partnerId).first();
@@ -1085,16 +1095,6 @@ async function handleApiRequest(request, url, env) {
       // Check partner approval status (B06 defense)
       if (partner.verification_status !== "APPROVED") {
         return errorResponse("UNAPPROVED_PARTNER", "관리자 서류 심사가 완료된 승인 파트너만 가용 슬롯을 등록할 수 있습니다.", 403);
-      }
-
-      // SBK-FIX-A (P0-01): Auth & Ownership Check via secure token header only
-      const partnerKey = request.headers.get("X-SBK-Partner-Key");
-      const adminKey = request.headers.get("X-SBK-Admin-Key");
-      const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
-      const isOwner = partnerKey && (await verifyPartnerAuthToken(partnerKey, partnerId, env));
-
-      if (!isAdmin && !isOwner) {
-        return errorResponse("FORBIDDEN", "본인 소유의 파트너 계정만 슬롯을 등록할 수 있습니다.", 403);
       }
 
       // KST 24~72h window validation
@@ -1238,11 +1238,6 @@ async function handleApiRequest(request, url, env) {
       return errorResponse("PARTNER_ID_REQUIRED", "partner_id 파라미터가 필요합니다.", 400);
     }
 
-    const partner = await env.DB.prepare("SELECT id, business_number FROM partners WHERE id = ?").bind(partnerId).first();
-    if (!partner) {
-      return errorResponse("PARTNER_NOT_FOUND", "파트너 정보를 찾을 수 없습니다.", 404);
-    }
-
     const partnerKey = request.headers.get("X-SBK-Partner-Key");
     const adminKey = request.headers.get("X-SBK-Admin-Key");
     const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
@@ -1250,6 +1245,11 @@ async function handleApiRequest(request, url, env) {
 
     if (!isAdmin && !isOwner) {
       return errorResponse("FORBIDDEN", "본인에게 배정된 오퍼 목록만 조회할 수 있습니다.", 403);
+    }
+
+    const partner = await env.DB.prepare("SELECT id, business_number FROM partners WHERE id = ?").bind(partnerId).first();
+    if (!partner) {
+      return errorResponse("PARTNER_NOT_FOUND", "파트너 정보를 찾을 수 없습니다.", 404);
     }
 
     const rows = await env.DB.prepare(

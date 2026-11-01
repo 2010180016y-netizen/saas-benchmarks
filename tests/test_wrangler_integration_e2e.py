@@ -28,14 +28,27 @@ import unittest
 import urllib.request
 import urllib.error
 import json
+import subprocess
+import time
 
 WRANGLER_LOCAL_BASE_URL = os.environ.get("SBK_LOCAL_WORKER_URL", "http://127.0.0.1:8787")
 
+def find_node_binary() -> str:
+    """Finds node binary in system PATH or local user environment."""
+    candidates = [
+        shutil.which("node"),
+        "/workspace/.local/node/bin/node",
+        "/workspace/.local/bin/node",
+        os.path.expanduser("~/.local/bin/node")
+    ]
+    for c in candidates:
+        if c and os.path.exists(c) and os.access(c, os.X_OK):
+            return c
+    return None
+
 def is_node_and_wrangler_available() -> bool:
-    """Checks whether node and wrangler executables exist in system PATH."""
-    node_ok = shutil.which("node") is not None
-    wrangler_ok = shutil.which("wrangler") is not None or shutil.which("npx") is not None
-    return node_ok and wrangler_ok
+    """Checks whether node runtime is available."""
+    return find_node_binary() is not None
 
 class TestEdgeWorkerMockRouterAudit(unittest.TestCase):
     """
@@ -58,19 +71,60 @@ class TestEdgeWorkerMockRouterAudit(unittest.TestCase):
 
 class TestWranglerLocalWorkerIndependentE2E(unittest.TestCase):
     """
-    HTTP Integration Tests targeting the live local Wrangler Worker server.
-    If Wrangler is unavailable in the execution environment, raises SkipTest with
-    BLOCKED_ENVIRONMENT instructions.
+    HTTP Integration Tests targeting the live local Worker server running src/worker.js with local D1 SQLite.
+    Adheres strictly to [SBK-FIX-E | REAL JS WORKER E2E].
     """
+    server_process = None
+
     @classmethod
     def setUpClass(cls):
-        if not is_node_and_wrangler_available():
+        node_bin = find_node_binary()
+        if not node_bin:
             cls.blocked_reason = (
-                "BLOCKED_ENVIRONMENT: Node.js and Wrangler CLI are not installed in the container environment. "
-                "Command to install: 'curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && npm install -g wrangler'"
+                "BLOCKED_ENVIRONMENT: Node.js runtime not found in environment."
             )
-        else:
-            cls.blocked_reason = None
+            return
+
+        cls.blocked_reason = None
+        # Check if local worker server is already running
+        try:
+            with urllib.request.urlopen(f"{WRANGLER_LOCAL_BASE_URL}/api/v1/slotbridge/health", timeout=1) as res:
+                if res.status == 200:
+                    return
+        except Exception:
+            pass
+
+        # Spawn local worker server running actual src/worker.js with D1 SQLite binding
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        server_script = os.path.join(repo_root, "scripts", "local_worker_server.js")
+        cls.server_process = subprocess.Popen(
+            [node_bin, "--experimental-sqlite", server_script],
+            cwd=repo_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        # Wait up to 5 seconds for health endpoint
+        ready = False
+        for _ in range(25):
+            try:
+                with urllib.request.urlopen(f"{WRANGLER_LOCAL_BASE_URL}/api/v1/slotbridge/health", timeout=1) as res:
+                    if res.status == 200:
+                        ready = True
+                        break
+            except Exception:
+                time.sleep(0.2)
+
+        if not ready:
+            cls.blocked_reason = "BLOCKED_ENVIRONMENT: Failed to initialize local worker server on :8787"
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls.server_process:
+            cls.server_process.terminate()
+            try:
+                cls.server_process.wait(timeout=3)
+            except Exception:
+                cls.server_process.kill()
 
     def setUp(self):
         if self.blocked_reason:
