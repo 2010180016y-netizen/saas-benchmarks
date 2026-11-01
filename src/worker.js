@@ -414,6 +414,54 @@ async function dispatchCandidateOffer(inquiryId, env, ttlMinutes = 15) {
   };
 }
 
+// SBK-MINI-09 & SBK-FIX-C (P0-04, P1-08): Top-level Scheduled Timeout Processor
+async function processTimeoutsInternal(env) {
+  if (!env.DB) return { processed_count: 0, reassigned_count: 0 };
+  const nowIso = new Date().toISOString();
+  const expiredOffers = await env.DB.prepare(
+    "SELECT id, inquiry_id, partner_id, slot_id FROM assignment_offers WHERE status = 'PENDING' AND expires_at < ?"
+  ).bind(nowIso).all();
+
+  let processed = 0;
+  let reassigned = 0;
+
+  for (const off of (expiredOffers.results || [])) {
+    // 1. Mark offer as EXPIRED
+    const offerRes = await env.DB.prepare(
+      "UPDATE assignment_offers SET status = 'EXPIRED', updated_at = ? WHERE id = ? AND status = 'PENDING'"
+    ).bind(nowIso, off.id).run();
+    if (!offerRes.meta || offerRes.meta.changes === 0) continue;
+
+    // 2. Free previous partner slot back to AVAILABLE
+    await env.DB.prepare(
+      "UPDATE capacity_slots SET status = 'AVAILABLE', updated_at = ? WHERE id = ?"
+    ).bind(nowIso, off.slot_id).run();
+
+    // 3. Record response TIMEOUT
+    await env.DB.prepare(
+      "INSERT INTO partner_responses (id, offer_id, partner_id, response_type, rejection_reason, responded_at) VALUES (?, ?, ?, 'TIMEOUT', '15_MIN_SLA_EXPIRED', ?)"
+    ).bind("resp_" + crypto.randomUUID(), off.id, off.partner_id, nowIso).run().catch(() => {});
+
+    processed++;
+
+    // 4. P1-08: Check inquiry status before resetting to PENDING_MATCH
+    const inq = await env.DB.prepare("SELECT status FROM inquiries WHERE id = ?").bind(off.inquiry_id).first();
+    if (inq && inq.status !== "CANCELLED") {
+      await env.DB.prepare(
+        "UPDATE inquiries SET status = 'PENDING_MATCH', updated_at = ? WHERE id = ? AND status != 'CANCELLED'"
+      ).bind(nowIso, off.inquiry_id).run();
+
+      // 5. Trigger sequential re-routing to Rank 2 candidate!
+      const nextOffer = await dispatchCandidateOffer(off.inquiry_id, env);
+      if (nextOffer) {
+        reassigned++;
+      }
+    }
+  }
+
+  return { processed_count: processed, reassigned_count: reassigned, timestamp: nowIso };
+}
+
 async function handleApiRequest(request, url, env) {
   const path = url.pathname.replace("/api/v1/slotbridge", "");
   const method = request.method;
@@ -774,18 +822,53 @@ async function handleApiRequest(request, url, env) {
       .bind(tombstoneId, tombstoneId, tombstoneId, nowIso, token)
       .run();
 
+    // SBK-FIX-C (P1-08): Cascade cancellation to pending offers and free slots back to AVAILABLE
+    const pendingOffers = await env.DB.prepare(
+      "SELECT id, slot_id FROM assignment_offers WHERE inquiry_id = ? AND status = 'PENDING'"
+    ).bind(inq.id).all();
+
+    for (const off of (pendingOffers.results || [])) {
+      await env.DB.prepare(
+        "UPDATE assignment_offers SET status = 'CANCELLED', updated_at = ? WHERE id = ? AND status = 'PENDING'"
+      ).bind(nowIso, off.id).run();
+
+      await env.DB.prepare(
+        "UPDATE capacity_slots SET status = 'AVAILABLE', updated_at = ? WHERE id = ? AND status = 'OFFERED'"
+      ).bind(nowIso, off.slot_id).run();
+    }
+
+    // Cancel any active matches that have not reached COMPLETED / BILLABLE
+    const activeMatches = await env.DB.prepare(
+      "SELECT id, slot_id FROM matches WHERE inquiry_id = ? AND status NOT IN ('COMPLETED', 'BILLABLE', 'CANCELLED')"
+    ).bind(inq.id).all();
+
+    for (const m of (activeMatches.results || [])) {
+      await env.DB.prepare(
+        "UPDATE matches SET status = 'CANCELLED', updated_at = ? WHERE id = ?"
+      ).bind(nowIso, m.id).run();
+
+      await env.DB.prepare(
+        "UPDATE capacity_slots SET status = 'AVAILABLE', updated_at = ? WHERE id = ?"
+      ).bind(nowIso, m.slot_id).run();
+    }
+
     // Record Audit
     await env.DB.prepare(
       `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
-      VALUES (?, 'CUSTOMER', 'INQUIRY_REVOKED', 'INQUIRY', ?, '{"tombstoned": true}', ?)`
+      VALUES (?, 'CUSTOMER', 'INQUIRY_REVOKED', 'INQUIRY', ?, ?, ?)`
     )
-      .bind("aud_" + crypto.randomUUID(), inq.id, nowIso)
+      .bind(
+        "aud_" + crypto.randomUUID(),
+        inq.id,
+        JSON.stringify({ tombstoned: true, offers_cancelled: (pendingOffers.results || []).length, matches_cancelled: (activeMatches.results || []).length }),
+        nowIso
+      )
       .run();
 
     return jsonResponse({
       ok: true,
       status: "CANCELLED",
-      message: "신청이 정상 취소되었으며 개인정보가 영구 파기(tombstone)되었습니다.",
+      message: "신청이 정상 취소되었으며 대기 중인 오퍼/슬롯이 원복되고 개인정보가 영구 파기(tombstone)되었습니다.",
     });
   }
 
@@ -972,6 +1055,9 @@ async function handleApiRequest(request, url, env) {
     const dbErr = checkD1Database(env);
     if (dbErr) return dbErr;
 
+    const gateErr = checkOperatorReleaseGate(env);
+    if (gateErr) return gateErr;
+
     try {
       const body = await request.json();
       const partnerId = body.partner_id;
@@ -1095,6 +1181,9 @@ async function handleApiRequest(request, url, env) {
     const dbErr = checkD1Database(env);
     if (dbErr) return dbErr;
 
+    const gateErr = checkOperatorReleaseGate(env);
+    if (gateErr) return gateErr;
+
     const slotId = matchSlotDelete[1];
     const partnerKey = request.headers.get("X-SBK-Partner-Key");
     const adminKey = request.headers.get("X-SBK-Admin-Key");
@@ -1179,6 +1268,9 @@ async function handleApiRequest(request, url, env) {
     const dbErr = checkD1Database(env);
     if (dbErr) return dbErr;
 
+    const gateErr = checkOperatorReleaseGate(env);
+    if (gateErr) return gateErr;
+
     const offerId = matchOfferAccept[1];
     const body = await request.json().catch(() => ({}));
     const partnerId = body.partner_id;
@@ -1224,6 +1316,17 @@ async function handleApiRequest(request, url, env) {
       return errorResponse("OFFER_EXPIRED", "15분 수락 제한시간이 만료되었습니다.", 410);
     }
 
+    // SBK-FIX-C (P1-08): Check if customer cancelled or withdrew inquiry before accepting
+    const inqCheck = await env.DB.prepare(
+      "SELECT id, status, customer_phone_encrypted FROM inquiries WHERE id = ?"
+    ).bind(offer.inquiry_id).first();
+
+    if (!inqCheck || inqCheck.status === "CANCELLED" || (inqCheck.customer_phone_encrypted && inqCheck.customer_phone_encrypted.startsWith("ERASED_"))) {
+      await env.DB.prepare("UPDATE assignment_offers SET status = 'CANCELLED', updated_at = ? WHERE id = ? AND status = 'PENDING'").bind(nowIso, offerId).run();
+      await env.DB.prepare("UPDATE capacity_slots SET status = 'AVAILABLE', updated_at = ? WHERE id = ? AND status = 'OFFERED'").bind(nowIso, offer.slot_id).run();
+      return errorResponse("INQUIRY_CANCELLED", "고객이 이미 신청을 취소/철회하여 오퍼를 수락할 수 없습니다.", 410);
+    }
+
     // Atomic conditional slot locking (WHERE status = 'OFFERED')
     const slotLock = await env.DB.prepare(
       "UPDATE capacity_slots SET status = 'RESERVED', allocated_count = 1, updated_at = ? WHERE id = ? AND status = 'OFFERED'"
@@ -1239,20 +1342,35 @@ async function handleApiRequest(request, url, env) {
     ).bind(nowIso, offerId).run();
 
     if (!offerUpdate.meta || offerUpdate.meta.changes === 0) {
+      // SBK-FIX-C (P0-10): Compensation rollback of slot lock
+      await env.DB.prepare(
+        "UPDATE capacity_slots SET status = 'OFFERED', allocated_count = 0, updated_at = ? WHERE id = ?"
+      ).bind(nowIso, offer.slot_id).run();
       return errorResponse("ALREADY_PROCESSED", "오퍼가 이미 처리되었거나 동시 수락 경합이 발생했습니다.", 409);
     }
 
-    await env.DB.prepare("UPDATE inquiries SET status = 'MATCHED', updated_at = ? WHERE id = ?").bind(nowIso, offer.inquiry_id).run();
-
-    await env.DB.prepare(
-      "INSERT INTO partner_responses (id, offer_id, partner_id, response_type, responded_at) VALUES (?, ?, ?, 'ACCEPT', ?)"
-    ).bind("resp_" + crypto.randomUUID(), offerId, partnerId, nowIso).run();
-
     const matchId = "mat_" + crypto.randomUUID();
-    await env.DB.prepare(
-      `INSERT INTO matches (id, inquiry_id, partner_id, slot_id, status, estimated_amount, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'CONFIRMED', 250000, ?, ?)`
-    ).bind(matchId, offer.inquiry_id, partnerId, offer.slot_id, nowIso, nowIso).run();
+    const respId = "resp_" + crypto.randomUUID();
+    try {
+      await env.DB.prepare("UPDATE inquiries SET status = 'MATCHED', updated_at = ? WHERE id = ?").bind(nowIso, offer.inquiry_id).run();
+
+      await env.DB.prepare(
+        "INSERT INTO partner_responses (id, offer_id, partner_id, response_type, responded_at) VALUES (?, ?, ?, 'ACCEPT', ?)"
+      ).bind(respId, offerId, partnerId, nowIso).run();
+
+      await env.DB.prepare(
+        `INSERT INTO matches (id, inquiry_id, partner_id, slot_id, status, estimated_amount, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'CONFIRMED', 250000, ?, ?)`
+      ).bind(matchId, offer.inquiry_id, partnerId, offer.slot_id, nowIso, nowIso).run();
+    } catch (transErr) {
+      // SBK-FIX-C (P0-10): Multi-statement rollback compensation
+      await env.DB.prepare("UPDATE capacity_slots SET status = 'OFFERED', allocated_count = 0, updated_at = ? WHERE id = ?").bind(nowIso, offer.slot_id).run();
+      await env.DB.prepare("UPDATE assignment_offers SET status = 'PENDING', updated_at = ? WHERE id = ?").bind(nowIso, offerId).run();
+      await env.DB.prepare("UPDATE inquiries SET status = 'PENDING_MATCH', updated_at = ? WHERE id = ?").bind(nowIso, offer.inquiry_id).run();
+      await env.DB.prepare("DELETE FROM partner_responses WHERE id = ?").bind(respId).run().catch(() => {});
+      await env.DB.prepare("DELETE FROM matches WHERE id = ?").bind(matchId).run().catch(() => {});
+      return errorResponse("TRANSACTION_FAILED", "매칭 확정 트랜잭션 처리 중 오류가 발생하여 안전하게 롤백되었습니다: " + transErr.message, 500);
+    }
 
     // SBK-FIX-B (P0-05): Fetch inquiry for secure customer contact handoff
     const inq = await env.DB.prepare(
@@ -1325,6 +1443,9 @@ async function handleApiRequest(request, url, env) {
     const dbErr = checkD1Database(env);
     if (dbErr) return dbErr;
 
+    const gateErr = checkOperatorReleaseGate(env);
+    if (gateErr) return gateErr;
+
     const offerId = matchOfferReject[1];
     const body = await request.json().catch(() => ({}));
     const partnerId = body.partner_id;
@@ -1360,10 +1481,13 @@ async function handleApiRequest(request, url, env) {
       "INSERT INTO partner_responses (id, offer_id, partner_id, response_type, rejection_reason, responded_at) VALUES (?, ?, ?, 'REJECT', ?, ?)"
     ).bind("resp_" + crypto.randomUUID(), offerId, partnerId, reason, nowIso).run();
 
-    await env.DB.prepare("UPDATE inquiries SET status = 'PENDING_MATCH', updated_at = ? WHERE id = ?").bind(nowIso, offer.inquiry_id).run();
-
-    // Trigger sequential re-routing to Rank 2
-    const nextOffer = await dispatchCandidateOffer(offer.inquiry_id, env);
+    // SBK-FIX-C (P1-08): Only reset to PENDING_MATCH and re-route if customer has not cancelled
+    const inq = await env.DB.prepare("SELECT status FROM inquiries WHERE id = ?").bind(offer.inquiry_id).first();
+    let nextOffer = null;
+    if (inq && inq.status !== "CANCELLED") {
+      await env.DB.prepare("UPDATE inquiries SET status = 'PENDING_MATCH', updated_at = ? WHERE id = ?").bind(nowIso, offer.inquiry_id).run();
+      nextOffer = await dispatchCandidateOffer(offer.inquiry_id, env);
+    }
 
     return jsonResponse({
       ok: true,
@@ -1495,6 +1619,9 @@ async function handleApiRequest(request, url, env) {
     const dbErr = checkD1Database(env);
     if (dbErr) return dbErr;
 
+    const gateErr = checkOperatorReleaseGate(env);
+    if (gateErr) return gateErr;
+
     try {
       const matchId = matchFulfill[1];
       const body = await request.json().catch(() => ({}));
@@ -1542,6 +1669,12 @@ async function handleApiRequest(request, url, env) {
       if (match.status === "DISPUTED") {
         return errorResponse("MATCH_DISPUTED", "분쟁 진행 중인 매칭에 대해서는 완료 보고를 제출할 수 없습니다.", 400);
       }
+      if (match.status === "CANCELLED") {
+        return errorResponse("MATCH_CANCELLED", "취소된 매칭에 대해서는 완료 보고를 제출할 수 없습니다.", 400);
+      }
+      if (match.status !== "CONFIRMED") {
+        return errorResponse("INVALID_MATCH_STATUS", `확정(CONFIRMED) 상태의 매칭만 완료 보고를 제출할 수 있습니다 (현재: ${match.status}).`, 400);
+      }
 
       const inq = await env.DB.prepare("SELECT status FROM inquiries WHERE id = ?").bind(match.inquiry_id).first();
       if (inq && inq.status === "CANCELLED") {
@@ -1551,16 +1684,21 @@ async function handleApiRequest(request, url, env) {
       const nowIso = new Date().toISOString();
       const evidenceId = "evi_" + crypto.randomUUID();
 
-      // Save evidence with PENDING_CUSTOMER_CONFIRMATION
-      await env.DB.prepare(
-        `INSERT INTO fulfillment_evidence (
-          id, match_id, photo_urls, completion_timestamp, partner_submitted_amount, verification_status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'PENDING_CUSTOMER_CONFIRMATION', ?, ?)`
-      ).bind(evidenceId, matchId, JSON.stringify(photoUrls), nowIso, finalAmount, nowIso, nowIso).run();
+      // Save evidence and update match status with rollback compensation
+      try {
+        await env.DB.prepare(
+          `INSERT INTO fulfillment_evidence (
+            id, match_id, photo_urls, completion_timestamp, partner_submitted_amount, verification_status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, 'PENDING_CUSTOMER_CONFIRMATION', ?, ?)`
+        ).bind(evidenceId, matchId, JSON.stringify(photoUrls), nowIso, finalAmount, nowIso, nowIso).run();
 
-      await env.DB.prepare(
-        "UPDATE matches SET status = 'COMPLETED', final_amount = ?, updated_at = ? WHERE id = ?"
-      ).bind(finalAmount, nowIso, matchId).run();
+        await env.DB.prepare(
+          "UPDATE matches SET status = 'COMPLETED', final_amount = ?, updated_at = ? WHERE id = ? AND status = 'CONFIRMED'"
+        ).bind(finalAmount, nowIso, matchId).run();
+      } catch (err) {
+        await env.DB.prepare("DELETE FROM fulfillment_evidence WHERE id = ?").bind(evidenceId).run().catch(() => {});
+        throw err;
+      }
 
       return jsonResponse({
         ok: true,
@@ -1579,6 +1717,9 @@ async function handleApiRequest(request, url, env) {
   if (matchConfirm && method === "POST") {
     const dbErr = checkD1Database(env);
     if (dbErr) return dbErr;
+
+    const gateErr = checkOperatorReleaseGate(env);
+    if (gateErr) return gateErr;
 
     try {
       const matchId = matchConfirm[1];
@@ -1607,6 +1748,9 @@ async function handleApiRequest(request, url, env) {
 
       if (matchWithInq.status === "DISPUTED") {
         return errorResponse("MATCH_DISPUTED", "분쟁 진행 중인 건은 완료 확인할 수 없습니다.", 400);
+      }
+      if (matchWithInq.status === "CANCELLED") {
+        return errorResponse("MATCH_CANCELLED", "취소된 매칭은 완료 확인할 수 없습니다.", 400);
       }
       if (matchWithInq.status === "BILLABLE") {
         return errorResponse("ALREADY_CONFIRMED", "이미 고객 확인 및 정산 완료된 매칭입니다.", 409);
@@ -1797,6 +1941,9 @@ async function handleApiRequest(request, url, env) {
       const dbErr = checkD1Database(env);
       if (dbErr) return dbErr;
 
+      const gateErr = checkOperatorReleaseGate(env);
+      if (gateErr) return gateErr;
+
       const body = await request.json().catch(() => ({}));
       const partnerId = body.partner_id;
       const billingPeriod = body.billing_period;
@@ -1873,6 +2020,9 @@ async function handleApiRequest(request, url, env) {
       const dbErr = checkD1Database(env);
       if (dbErr) return dbErr;
 
+      const gateErr = checkOperatorReleaseGate(env);
+      if (gateErr) return gateErr;
+
       const invoiceId = matchInvoiceIssue[1];
       const body = await request.json().catch(() => ({}));
       const hometaxApproval = body.hometax_approval_number ? String(body.hometax_approval_number).trim() : null;
@@ -1931,6 +2081,9 @@ async function handleApiRequest(request, url, env) {
     if (matchInvoicePay && method === "POST") {
       const dbErr = checkD1Database(env);
       if (dbErr) return dbErr;
+
+      const gateErr = checkOperatorReleaseGate(env);
+      if (gateErr) return gateErr;
 
       const invoiceId = matchInvoicePay[1];
       const body = await request.json().catch(() => ({}));
@@ -1993,6 +2146,9 @@ async function handleApiRequest(request, url, env) {
     if (path === "/admin/payouts/generate" && method === "POST") {
       const dbErr = checkD1Database(env);
       if (dbErr) return dbErr;
+
+      const gateErr = checkOperatorReleaseGate(env);
+      if (gateErr) return gateErr;
 
       const body = await request.json().catch(() => ({}));
       const partnerId = body.referring_partner_id;
@@ -2072,6 +2228,9 @@ async function handleApiRequest(request, url, env) {
     if (matchPayoutApprove && method === "POST") {
       const dbErr = checkD1Database(env);
       if (dbErr) return dbErr;
+
+      const gateErr = checkOperatorReleaseGate(env);
+      if (gateErr) return gateErr;
 
       const payoutId = matchPayoutApprove[1];
       const body = await request.json().catch(() => ({}));
@@ -2358,51 +2517,6 @@ async function handleApiRequest(request, url, env) {
       }
     }
   }
-
-// SBK-MINI-09: Process 15-minute offer timeouts, free slots, and sequentially re-route to Rank 2
-async function processTimeoutsInternal(env) {
-  if (!env.DB) return { processed_count: 0, reassigned_count: 0 };
-  const nowIso = new Date().toISOString();
-  const expiredOffers = await env.DB.prepare(
-    "SELECT id, inquiry_id, partner_id, slot_id FROM assignment_offers WHERE status = 'PENDING' AND expires_at < ?"
-  ).bind(nowIso).all();
-
-  let processed = 0;
-  let reassigned = 0;
-
-  for (const off of (expiredOffers.results || [])) {
-    // 1. Mark offer as EXPIRED
-    const offerRes = await env.DB.prepare(
-      "UPDATE assignment_offers SET status = 'EXPIRED', updated_at = ? WHERE id = ? AND status = 'PENDING'"
-    ).bind(nowIso, off.id).run();
-    if (!offerRes.meta || offerRes.meta.changes === 0) continue;
-
-    // 2. Free previous partner slot back to AVAILABLE
-    await env.DB.prepare(
-      "UPDATE capacity_slots SET status = 'AVAILABLE', updated_at = ? WHERE id = ?"
-    ).bind(nowIso, off.slot_id).run();
-
-    // 3. Record response TIMEOUT
-    await env.DB.prepare(
-      "INSERT INTO partner_responses (id, offer_id, partner_id, response_type, rejection_reason, responded_at) VALUES (?, ?, ?, 'TIMEOUT', '15_MIN_SLA_EXPIRED', ?)"
-    ).bind("resp_" + crypto.randomUUID(), off.id, off.partner_id, nowIso).run().catch(() => {});
-
-    // 4. Set inquiry status back to PENDING_MATCH
-    await env.DB.prepare(
-      "UPDATE inquiries SET status = 'PENDING_MATCH', updated_at = ? WHERE id = ?"
-    ).bind(nowIso, off.inquiry_id).run();
-
-    processed++;
-
-    // 5. Trigger sequential re-routing to Rank 2 candidate!
-    const nextOffer = await dispatchCandidateOffer(off.inquiry_id, env);
-    if (nextOffer) {
-      reassigned++;
-    }
-  }
-
-  return { processed_count: processed, reassigned_count: reassigned, timestamp: nowIso };
-}
 
   // 7. Cron Trigger: Process 15-minute offer timeouts & auto-reassignment (B12 & SBK-MINI-09)
   if (path === "/cron/process-timeouts" && method === "POST") {
