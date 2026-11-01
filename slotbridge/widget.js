@@ -90,7 +90,7 @@
   desc.style.margin = '0 0 14px 0';
   desc.style.fontSize = '13px';
   desc.style.color = mutedColor;
-  desc.textContent = targetDistrict + ' 공인 연합 청소팀의 [24~72시간 잔여 슬롯]을 조회하여 바로 연결해 드립니다.';
+  desc.textContent = targetDistrict + ' 파트너 청소팀의 [24~72시간 잔여 슬롯]을 조회하여 바로 연결해 드립니다.';
   card.appendChild(desc);
 
   // Action Button (Default base URL without signed token)

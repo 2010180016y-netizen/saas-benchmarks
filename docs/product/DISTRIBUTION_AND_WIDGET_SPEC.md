@@ -21,7 +21,7 @@
 - **외부 종속성 0개:** 번들 크기 5KB 미만의 순수 바닐라 JavaScript로 호스트 사이트 성능 저하 제로.
 - **쿠키 없는 귀속 (Cookie-Free Attribution):** 3자 쿠키(Third-party Cookies)를 일체 사용하지 않으며, 암호화된 HMAC 서명 토큰(`attribution_token`)을 URL 파라미터로 결속하여 브라우저의 쿠키 차단(ITP 등) 영향을 받지 않음.
 - **클릭재킹 방지:** 임베드 위젯은 호스트 DOM 내에 표준 시맨틱 엘리먼트로 주입되며, 플랫폼 백엔드는 `X-Frame-Options: SAMEORIGIN` 및 `Content-Security-Policy: frame-ancestors 'self'`를 강제하여 악의적 투명 iframe 납치를 차단.
-- **브랜드 혼동 방지:** 위젯 상단에 파트너사 상호명을 명시함과 동시에, 하단에 "SlotBridge Korea 공인 연합 청소 네트워크를 통해 연결됩니다"라는 중개 지위를 100% 투명하게 고지.
+- **브랜드 혼동 방지:** 위젯 상단에 파트너사 상호명을 명시함과 동시에, 하단에 "SlotBridge Korea 파트너 청소 네트워크를 통해 연결됩니다"라는 중개 지위를 100% 투명하게 고지.
 
 ---
 
