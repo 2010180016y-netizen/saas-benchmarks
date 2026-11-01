@@ -188,7 +188,26 @@ class EdgeWorkerMockRouter:
                 """,
                 (partner_id, org_id, name, biz_num, body.get("representative_name", "대표"), body.get("contact_phone", "010-1234-5678"), now_iso, now_iso)
             )
-            return 201, {"ok": True, "partner_id": partner_id, "status": "PENDING_APPROVAL"}
+
+            # SBK-FIX-B (P0-03): Bind service areas
+            d_str = body.get("district", "관악·동작 통합")
+            target_districts = []
+            if d_str == "관악구":
+                target_districts = ["관악구"]
+            elif d_str == "동작구":
+                target_districts = ["동작구"]
+            else:
+                target_districts = ["관악구", "동작구"]
+            for dist in target_districts:
+                self.db.execute(
+                    """
+                    INSERT INTO service_areas (id, partner_id, city, district, neighborhood, is_active, created_at)
+                    VALUES (?, ?, '서울특별시', ?, '전역', 1, ?)
+                    """,
+                    (f"sa_{uuid.uuid4()}", partner_id, dist, now_iso)
+                )
+
+            return 201, {"ok": True, "partner_id": partner_id, "status": "PENDING_APPROVAL", "service_areas": target_districts}
 
         # 6. Admin Auth Gate
         if path.startswith("/api/v1/slotbridge/admin/"):

@@ -810,17 +810,17 @@ async function handleApiRequest(request, url, env) {
         return errorResponse("INVALID_NAME", "상호명을 2자 이상 입력해 주세요.", 400);
       }
       // Business number: 10 digits if provided; if unregistered individual pilot, assign unique pilot ID
-      let bizNum = (body.business_number || "").replace(/[^0-9]/g, "");
-      if (bizNum.length > 0 && bizNum.length !== 10) {
+      let bizNumClean = (body.business_number || "").replace(/[^0-9]/g, "");
+      if (bizNumClean.length > 0 && bizNumClean.length !== 10) {
         return errorResponse("INVALID_BIZ_NUMBER", "사업자등록번호는 10자리 숫자여야 합니다 (개인 파일럿은 비워둘 수 있습니다).", 400);
       }
-      if (!bizNum) {
-        bizNum = "INDIV_" + crypto.randomUUID().replace(/-/g, "").slice(0, 10);
+      if (!bizNumClean) {
+        bizNumClean = "INDIV_" + crypto.randomUUID().replace(/-/g, "").slice(0, 10);
       } else {
         // Business number duplicate check
         const existingPartner = await env.DB.prepare(
           "SELECT id, name FROM partners WHERE business_number = ?"
-        ).bind(bizNum).first();
+        ).bind(bizNumClean).first();
         if (existingPartner) {
           return errorResponse("DUPLICATE_PARTNER", "이미 등록된 사업자등록번호입니다.", 409);
         }
@@ -834,7 +834,7 @@ async function handleApiRequest(request, url, env) {
         `INSERT INTO organizations (id, name, business_number, representative_name, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?)`
       )
-        .bind(orgId, name, bizNum, rep, nowIso, nowIso)
+        .bind(orgId, name, bizNumClean, rep, nowIso, nowIso)
         .run();
 
       await env.DB.prepare(
@@ -843,8 +843,39 @@ async function handleApiRequest(request, url, env) {
           verification_status, liability_insurance_status, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING_APPROVAL', 'PENDING', ?, ?)`
       )
-        .bind(partnerId, orgId, name, partnerType, bizNum, rep, phone, nowIso, nowIso)
+        .bind(partnerId, orgId, name, partnerType, bizNumClean, rep, phone, nowIso, nowIso)
         .run();
+
+      // SBK-FIX-B (P0-03): Bind service areas for newly applied partner
+      let targetDistricts = [];
+      if (Array.isArray(body.service_areas) && body.service_areas.length > 0) {
+        for (const item of body.service_areas) {
+          const d = typeof item === "string" ? item : (item.district || "");
+          if (d && !targetDistricts.includes(d)) targetDistricts.push(d);
+        }
+      } else if (Array.isArray(body.districts) && body.districts.length > 0) {
+        for (const d of body.districts) {
+          if (d && !targetDistricts.includes(d)) targetDistricts.push(d);
+        }
+      } else {
+        const dStr = (body.district || "").trim();
+        if (dStr === "관악구") {
+          targetDistricts = ["관악구"];
+        } else if (dStr === "동작구") {
+          targetDistricts = ["동작구"];
+        } else {
+          // Default or "관악·동작 통합"
+          targetDistricts = ["관악구", "동작구"];
+        }
+      }
+
+      for (const dist of targetDistricts) {
+        const saId = "sa_" + crypto.randomUUID();
+        await env.DB.prepare(
+          `INSERT INTO service_areas (id, partner_id, city, district, neighborhood, is_active, created_at)
+           VALUES (?, ?, '서울특별시', ?, '전역', 1, ?)`
+        ).bind(saId, partnerId, dist, nowIso).run();
+      }
 
       let partnerKey = "";
       try {
@@ -858,6 +889,7 @@ async function handleApiRequest(request, url, env) {
           partner_key: partnerKey,
           name,
           partner_type: partnerType,
+          service_areas: targetDistricts,
           status: "PENDING_APPROVAL",
           message: "파트너 제휴 신청이 정상 접수되었습니다. 발급된 파트너 보안 인증 키(partner_key)를 안전하게 보관하세요.",
         },
@@ -866,6 +898,36 @@ async function handleApiRequest(request, url, env) {
     } catch (err) {
       return errorResponse("SERVER_ERROR", err.message, 500);
     }
+  }
+
+  // SBK-FIX-B (P0-03): Partner Service Areas Query: GET /service-areas?partner_id=...
+  if (path === "/service-areas" && method === "GET") {
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
+
+    const partnerId = url.searchParams.get("partner_id");
+    if (!partnerId) {
+      return errorResponse("PARTNER_ID_REQUIRED", "partner_id 파라미터가 필요합니다.", 400);
+    }
+
+    const partnerKey = request.headers.get("X-SBK-Partner-Key");
+    const adminKey = request.headers.get("X-SBK-Admin-Key");
+    const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
+    const isOwner = partnerKey && (await verifyPartnerAuthToken(partnerKey, partnerId, env));
+
+    if (!isAdmin && !isOwner) {
+      return errorResponse("FORBIDDEN", "본인의 서비스 지역 목록만 조회할 수 있습니다.", 403);
+    }
+
+    const rows = await env.DB.prepare(
+      "SELECT * FROM service_areas WHERE partner_id = ? AND is_active = 1 ORDER BY district ASC"
+    ).bind(partnerId).all();
+
+    return jsonResponse({
+      ok: true,
+      partner_id: partnerId,
+      service_areas: rows.results || []
+    });
   }
 
   // 5.1 Capacity Slots: GET /slots, POST /slots, DELETE /slots/:id (SBK-MINI-07)
@@ -1192,6 +1254,47 @@ async function handleApiRequest(request, url, env) {
        VALUES (?, ?, ?, ?, 'CONFIRMED', 250000, ?, ?)`
     ).bind(matchId, offer.inquiry_id, partnerId, offer.slot_id, nowIso, nowIso).run();
 
+    // SBK-FIX-B (P0-05): Fetch inquiry for secure customer contact handoff
+    const inq = await env.DB.prepare(
+      `SELECT id, tracking_token, district, neighborhood, housing_type, area_pyeong,
+              requested_date, time_window, customer_name_encrypted, customer_phone_encrypted,
+              status
+       FROM inquiries WHERE id = ?`
+    ).bind(offer.inquiry_id).first();
+
+    let decryptedName = "";
+    let decryptedPhone = "";
+    if (inq) {
+      try {
+        decryptedName = await decryptPii(inq.customer_name_encrypted, env);
+      } catch (_) {
+        decryptedName = "고객 (복호화 실패)";
+      }
+      try {
+        decryptedPhone = await decryptPii(inq.customer_phone_encrypted, env);
+      } catch (_) {
+        decryptedPhone = "010-****-****";
+      }
+    }
+
+    // SBK-FIX-B (P0-05): Audit log for secure PII contact handoff to accepted partner
+    await env.DB.prepare(
+      `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+       VALUES (?, ?, 'PII_HANDOFF', 'INQUIRY', ?, ?, ?)`
+    ).bind(
+      "aud_" + crypto.randomUUID(),
+      partnerId,
+      offer.inquiry_id,
+      JSON.stringify({
+        match_id: matchId,
+        offer_id: offerId,
+        recipient_partner_id: partnerId,
+        masked_phone: maskPhone(decryptedPhone),
+        handoff_type: "OFFER_ACCEPT"
+      }),
+      nowIso
+    ).run();
+
     await env.DB.prepare(
       `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
        VALUES (?, ?, 'OFFER_ACCEPTED', 'MATCH', ?, ?, ?)`
@@ -1202,7 +1305,18 @@ async function handleApiRequest(request, url, env) {
       match_id: matchId,
       offer_id: offerId,
       status: "CONFIRMED",
-      message: "오퍼가 정상 수락되어 매칭이 확정되었습니다."
+      customer_contact: {
+        name: decryptedName,
+        phone: decryptedPhone,
+        district: inq ? inq.district : "",
+        neighborhood: inq ? inq.neighborhood : "",
+        housing_type: inq ? inq.housing_type : "",
+        area_pyeong: inq ? inq.area_pyeong : 0,
+        requested_date: inq ? inq.requested_date : "",
+        time_window: inq ? inq.time_window : ""
+      },
+      instructions: "30분 이내에 고객님께 유선 연락하여 세부 일정과 현장 주소지를 확인하세요.",
+      message: "오퍼가 정상 수락되어 매칭이 확정되었습니다. 고객 연락처가 안전하게 인계되었습니다."
     }, 200);
   }
 
@@ -1257,6 +1371,121 @@ async function handleApiRequest(request, url, env) {
       status: "REJECTED",
       reassigned_offer: nextOffer,
       message: "오퍼가 거절되었으며 다음 순위 파트너로 자동 재배정됩니다."
+    }, 200);
+  }
+
+  // 5.3 Partner Matches List: GET /matches (SBK-FIX-B)
+  if (path === "/matches" && method === "GET") {
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
+
+    const partnerId = url.searchParams.get("partner_id");
+    if (!partnerId) {
+      return errorResponse("PARTNER_ID_REQUIRED", "partner_id 파라미터가 필요합니다.", 400);
+    }
+
+    const partnerKey = request.headers.get("X-SBK-Partner-Key");
+    const adminKey = request.headers.get("X-SBK-Admin-Key");
+    const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
+    const isOwner = partnerKey && (await verifyPartnerAuthToken(partnerKey, partnerId, env));
+
+    if (!isAdmin && !isOwner) {
+      return errorResponse("FORBIDDEN", "본인의 매칭 목록만 조회할 수 있습니다.", 403);
+    }
+
+    const rows = await env.DB.prepare(
+      `SELECT m.*, i.district, i.neighborhood, i.housing_type, i.area_pyeong, i.requested_date, i.time_window
+       FROM matches m
+       JOIN inquiries i ON m.inquiry_id = i.id
+       WHERE m.partner_id = ?
+       ORDER BY m.created_at DESC`
+    ).bind(partnerId).all();
+
+    return jsonResponse({
+      ok: true,
+      partner_id: partnerId,
+      matches: rows.results || []
+    });
+  }
+
+  // SBK-FIX-B (P0-05): Secure Customer Contact Retrieval Endpoint GET /matches/:id/contact
+  const matchContact = path.match(/^\/matches\/([a-zA-Z0-9_-]+)\/contact$/);
+  if (matchContact && method === "GET") {
+    const dbErr = checkD1Database(env);
+    if (dbErr) return dbErr;
+
+    const matchId = matchContact[1];
+    const partnerKey = request.headers.get("X-SBK-Partner-Key");
+    const adminKey = request.headers.get("X-SBK-Admin-Key");
+    const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
+
+    const match = await env.DB.prepare("SELECT * FROM matches WHERE id = ?").bind(matchId).first();
+    if (!match) {
+      return errorResponse("MATCH_NOT_FOUND", "일치하는 매칭 정보를 찾을 수 없습니다.", 404);
+    }
+
+    const partnerId = match.partner_id;
+    const isOwner = partnerKey && (await verifyPartnerAuthToken(partnerKey, partnerId, env));
+
+    if (!isAdmin && !isOwner) {
+      return errorResponse("FORBIDDEN", "배정된 파트너만 해당 매칭의 고객 연락처를 열람할 수 있습니다.", 403);
+    }
+
+    if (match.status === "CANCELLED") {
+      return errorResponse("MATCH_CANCELLED", "취소된 매칭의 고객 연락처는 열람할 수 없습니다.", 400);
+    }
+
+    const inq = await env.DB.prepare("SELECT * FROM inquiries WHERE id = ?").bind(match.inquiry_id).first();
+    if (!inq) {
+      return errorResponse("INQUIRY_NOT_FOUND", "고객 신청 내역을 찾을 수 없습니다.", 404);
+    }
+
+    if (inq.status === "CANCELLED" || (inq.customer_phone_encrypted && inq.customer_phone_encrypted.startsWith("ERASED_"))) {
+      return errorResponse("CUSTOMER_DATA_PURGED", "고객 요청에 의해 개인정보가 영구 파기(Tombstone)되었습니다.", 410);
+    }
+
+    let rawName = "";
+    let rawPhone = "";
+    try {
+      rawName = await decryptPii(inq.customer_name_encrypted, env);
+      rawPhone = await decryptPii(inq.customer_phone_encrypted, env);
+    } catch (err) {
+      return errorResponse("DECRYPTION_FAILED", "연락처 복호화 중 오류가 발생했습니다.", 500);
+    }
+
+    const nowIso = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+       VALUES (?, ?, 'PII_CONTACT_VIEW', 'MATCH', ?, ?, ?)`
+    ).bind(
+      "aud_" + crypto.randomUUID(),
+      partnerId,
+      matchId,
+      JSON.stringify({
+        match_id: matchId,
+        inquiry_id: match.inquiry_id,
+        masked_phone: maskPhone(rawPhone),
+        actor: isAdmin ? "ADMIN" : "PARTNER"
+      }),
+      nowIso
+    ).run();
+
+    return jsonResponse({
+      ok: true,
+      match_id: matchId,
+      inquiry_id: match.inquiry_id,
+      status: match.status,
+      customer_contact: {
+        name: rawName,
+        phone: rawPhone,
+        district: inq.district,
+        neighborhood: inq.neighborhood,
+        housing_type: inq.housing_type,
+        area_pyeong: inq.area_pyeong,
+        requested_date: inq.requested_date,
+        time_window: inq.time_window
+      },
+      instructions: "30분 이내에 고객님께 유선 연락하여 세부 일정과 현장 주소지를 확인하세요."
     }, 200);
   }
 
@@ -1980,6 +2209,47 @@ async function handleApiRequest(request, url, env) {
         "UPDATE partners SET verification_status = ?, liability_insurance_status = ?, updated_at = ? WHERE id = ?"
       ).bind(decision, insuranceStatus, nowIso, pId).run();
 
+      // SBK-FIX-B (P0-03): Guarantee service areas exist upon approval
+      if (decision === "APPROVED") {
+        let adminDistricts = [];
+        if (Array.isArray(body.service_areas) && body.service_areas.length > 0) {
+          for (const item of body.service_areas) {
+            const d = typeof item === "string" ? item : (item.district || "");
+            if (d && !adminDistricts.includes(d)) adminDistricts.push(d);
+          }
+        } else if (Array.isArray(body.districts) && body.districts.length > 0) {
+          adminDistricts = body.districts;
+        } else if (body.district) {
+          if (body.district === "관악구") adminDistricts = ["관악구"];
+          else if (body.district === "동작구") adminDistricts = ["동작구"];
+          else adminDistricts = ["관악구", "동작구"];
+        }
+
+        if (adminDistricts.length > 0) {
+          await env.DB.prepare("UPDATE service_areas SET is_active = 0 WHERE partner_id = ?").bind(pId).run();
+          for (const dist of adminDistricts) {
+            const saId = "sa_" + crypto.randomUUID();
+            await env.DB.prepare(
+              `INSERT INTO service_areas (id, partner_id, city, district, neighborhood, is_active, created_at)
+               VALUES (?, ?, '서울특별시', ?, '전역', 1, ?)`
+            ).bind(saId, pId, dist, nowIso).run();
+          }
+        } else {
+          const existingSa = await env.DB.prepare(
+            "SELECT count(*) AS cnt FROM service_areas WHERE partner_id = ? AND is_active = 1"
+          ).bind(pId).first();
+          if (!existingSa || Number(existingSa.cnt || 0) === 0) {
+            for (const dist of ["관악구", "동작구"]) {
+              const saId = "sa_" + crypto.randomUUID();
+              await env.DB.prepare(
+                `INSERT INTO service_areas (id, partner_id, city, district, neighborhood, is_active, created_at)
+                 VALUES (?, ?, '서울특별시', ?, '전역', 1, ?)`
+              ).bind(saId, pId, dist, nowIso).run();
+            }
+          }
+        }
+      }
+
       await env.DB.prepare(
         `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
         VALUES (?, 'ADMIN', 'PARTNER_VERIFIED', 'PARTNER', ?, ?, ?)`
@@ -2003,6 +2273,89 @@ async function handleApiRequest(request, url, env) {
         liability_insurance_status: insuranceStatus,
         message: `파트너 서류 심사가 완료되었습니다: ${decision}`
       });
+    }
+
+    // SBK-FIX-B (P0-03): Admin Partner Service Areas GET & PUT
+    const matchAdminServiceAreas = path.match(/^\/admin\/partners\/([a-zA-Z0-9_-]+)\/service-areas$/);
+    if (matchAdminServiceAreas) {
+      const dbErr = checkD1Database(env);
+      if (dbErr) return dbErr;
+
+      const pId = matchAdminServiceAreas[1];
+      const partner = await env.DB.prepare("SELECT id, name FROM partners WHERE id = ?").bind(pId).first();
+      if (!partner) {
+        return errorResponse("PARTNER_NOT_FOUND", "해당 파트너를 찾을 수 없습니다.", 404);
+      }
+
+      if (method === "GET") {
+        const rows = await env.DB.prepare(
+          "SELECT * FROM service_areas WHERE partner_id = ? AND is_active = 1 ORDER BY district ASC"
+        ).bind(pId).all();
+        return jsonResponse({
+          ok: true,
+          partner_id: pId,
+          service_areas: rows.results || []
+        });
+      }
+
+      if (method === "PUT" || method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        let targetDistricts = [];
+        if (Array.isArray(body.service_areas) && body.service_areas.length > 0) {
+          for (const item of body.service_areas) {
+            const d = typeof item === "string" ? item : (item.district || "");
+            if (d && !targetDistricts.includes(d)) targetDistricts.push(d);
+          }
+        } else if (Array.isArray(body.districts) && body.districts.length > 0) {
+          targetDistricts = body.districts;
+        } else if (body.district) {
+          targetDistricts = [body.district];
+        }
+
+        // Validate districts
+        for (const d of targetDistricts) {
+          if (!["관악구", "동작구"].includes(d)) {
+            return errorResponse("INVALID_DISTRICT", `지원하지 않는 서비스 지역입니다: ${d} (관악구, 동작구만 지원)`, 400);
+          }
+        }
+
+        if (targetDistricts.length === 0) {
+          return errorResponse("DISTRICT_REQUIRED", "최소 1개 이상의 유효 서비스 지역을 지정해야 합니다.", 400);
+        }
+
+        const nowIso = new Date().toISOString();
+        // Deactivate previous
+        await env.DB.prepare("UPDATE service_areas SET is_active = 0 WHERE partner_id = ?").bind(pId).run();
+
+        for (const d of targetDistricts) {
+          const saId = "sa_" + crypto.randomUUID();
+          await env.DB.prepare(
+            `INSERT INTO service_areas (id, partner_id, city, district, neighborhood, is_active, created_at)
+             VALUES (?, ?, '서울특별시', ?, '전역', 1, ?)`
+          ).bind(saId, pId, d, nowIso).run();
+        }
+
+        await env.DB.prepare(
+          `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+           VALUES (?, 'ADMIN', 'SERVICE_AREAS_UPDATED', 'PARTNER', ?, ?, ?)`
+        ).bind(
+          "aud_" + crypto.randomUUID(),
+          pId,
+          JSON.stringify({ updated_districts: targetDistricts }),
+          nowIso
+        ).run();
+
+        const updatedRows = await env.DB.prepare(
+          "SELECT * FROM service_areas WHERE partner_id = ? AND is_active = 1 ORDER BY district ASC"
+        ).bind(pId).all();
+
+        return jsonResponse({
+          ok: true,
+          partner_id: pId,
+          service_areas: updatedRows.results || [],
+          message: "파트너 서비스 지역이 성공적으로 갱신되었습니다."
+        });
+      }
     }
   }
 

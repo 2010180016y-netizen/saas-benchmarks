@@ -77,15 +77,31 @@ def apply_partner(db: DatabaseManager, data: Dict[str, Any]) -> Dict[str, Any]:
         )
     )
 
-    # 3. Create Service Areas
-    areas = data.get("service_areas", [{"city": "서울특별시", "district": "관악구", "neighborhood": "봉천동"}])
-    for area in areas:
+    # 3. Create Service Areas (SBK-FIX-B / P0-03)
+    target_districts = []
+    if "service_areas" in data and isinstance(data["service_areas"], list) and len(data["service_areas"]) > 0:
+        for sa in data["service_areas"]:
+            d = sa.get("district") if isinstance(sa, dict) else str(sa)
+            if d and d not in target_districts:
+                target_districts.append(d)
+    elif "districts" in data and isinstance(data["districts"], list) and len(data["districts"]) > 0:
+        target_districts = [str(d) for d in data["districts"]]
+    else:
+        d_str = str(data.get("district", "관악·동작 통합")).strip()
+        if d_str == "관악구":
+            target_districts = ["관악구"]
+        elif d_str == "동작구":
+            target_districts = ["동작구"]
+        else:
+            target_districts = ["관악구", "동작구"]
+
+    for dist in target_districts:
         db.execute(
             """
             INSERT INTO service_areas (id, partner_id, city, district, neighborhood, is_active, created_at)
-            VALUES (?, ?, ?, ?, ?, 1, ?)
+            VALUES (?, ?, '서울특별시', ?, '전역', 1, ?)
             """,
-            (f"sa_{uuid.uuid4()}", partner_id, area.get("city", "서울특별시"), area.get("district", "관악구"), area.get("neighborhood", "전체"), now_iso)
+            (f"sa_{uuid.uuid4()}", partner_id, dist, now_iso)
         )
 
     # 4. Audit Log
@@ -123,6 +139,18 @@ def approve_partner(
         "UPDATE partners SET verification_status = 'APPROVED', liability_insurance_status = ?, updated_at = ? WHERE id = ?",
         (ins_status, now_iso, partner_id)
     )
+
+    # SBK-FIX-B (P0-03): Guarantee service areas exist upon approval
+    existing_sa = db.execute("SELECT count(*) AS cnt FROM service_areas WHERE partner_id = ? AND is_active = 1", (partner_id,)).fetchone()
+    if not existing_sa or existing_sa["cnt"] == 0:
+        for dist in ["관악구", "동작구"]:
+            db.execute(
+                """
+                INSERT INTO service_areas (id, partner_id, city, district, neighborhood, is_active, created_at)
+                VALUES (?, ?, '서울특별시', ?, '전역', 1, ?)
+                """,
+                (f"sa_{uuid.uuid4()}", partner_id, dist, now_iso)
+            )
     db.execute(
         """
         INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)

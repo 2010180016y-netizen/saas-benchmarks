@@ -185,6 +185,22 @@
       </div>
     </div>
 
+    <!-- SBK-FIX-B (P0-05): 수락 완료 후 고객 연락처 안전 표시 모달 -->
+    <div class="modal-offer" id="contact-modal" style="display:none; background: #064e3b; border: 1px solid #10b981;">
+      <div class="timer-badge" style="background:#10b981; color:#fff;">✅ 매칭 확정 · 고객 연락처 안전 인계 완료</div>
+      <div class="offer-details" style="color: #ecfdf5;">
+        • <strong>고객 성명:</strong> <span id="contact-name" style="font-size:15px; font-weight:700; color:#34d399;">-</span><br>
+        • <strong>고객 연락처:</strong> <span id="contact-phone" style="font-size:16px; font-weight:700; color:#34d399;">-</span><br>
+        • <strong>시공 위치:</strong> <span id="contact-location">-</span><br>
+        • <strong>주거 형태:</strong> <span id="contact-housing">-</span><br>
+        • <strong>시공 희망일:</strong> <span id="contact-date">-</span><br>
+        • <strong>안내:</strong> <span style="color:#a7f3d0;">30분 이내에 고객님께 유선 연락하여 세부 일정과 주소지를 확인하세요.</span>
+      </div>
+      <div class="btn-group">
+        <button class="btn-accept" style="background:#059669;" onclick="document.getElementById('contact-modal').style.display='none'">확인 완료</button>
+      </div>
+    </div>
+
     <!-- 잔여 슬롯 캘린더 관리 -->
     <div class="card">
       <h3>
@@ -207,6 +223,17 @@
           </select>
           <button class="btn-add" onclick="addSlot()">슬롯 등록</button>
         </div>
+      </div>
+    </div>
+
+    <!-- SBK-FIX-B (P0-05): 확정된 매칭 및 고객 연락처 목록 -->
+    <div class="card" style="margin-top: 20px;">
+      <h3>
+        <span>🤝 내 확정 매칭 내역</span>
+        <button class="btn-add" style="padding:4px 8px; font-size:11px;" onclick="loadConfirmedMatches()">새로고침</button>
+      </h3>
+      <div id="confirmed-matches-list">
+        <div style="text-align:center; padding:18px; color:var(--muted); font-size:13px;">확정된 매칭을 서버에서 불러오는 중...</div>
       </div>
     </div>
   </div>
@@ -281,6 +308,68 @@
     }
     loadSlots();
 
+    async function loadConfirmedMatches() {
+      const el = document.getElementById('confirmed-matches-list');
+      try {
+        const headers = {};
+        if (partnerKey) headers['X-SBK-Partner-Key'] = partnerKey;
+        const res = await fetch(`/api/v1/slotbridge/matches?partner_id=${encodeURIComponent(partnerId)}`, { headers });
+        let data = {};
+        try { data = await res.json(); } catch (_) {}
+        if (res.ok && data.matches) {
+          if (data.matches.length === 0) {
+            el.innerHTML = '<div style="text-align:center; padding:18px; color:var(--muted); font-size:13px;">현재 확정된 매칭 내역이 없습니다.</div>';
+            return;
+          }
+          el.innerHTML = '';
+          data.matches.forEach(m => {
+            const row = document.createElement('div');
+            row.className = 'slot-row';
+            const loc = (m.district || '') + ' ' + (m.neighborhood || '');
+            const dateStr = (m.requested_date || '') + ' (' + (m.time_window || '') + ')';
+            row.innerHTML = `
+              <div>
+                <div class="slot-date">매칭 [${m.status}] · ${m.id}</div>
+                <div class="slot-window">${loc} · ${dateStr}</div>
+              </div>
+              <div>
+                <button class="btn-accept" style="padding:6px 12px; font-size:12px;" onclick="viewCustomerContact('${m.id}')">고객 연락처 확인</button>
+              </div>
+            `;
+            el.appendChild(row);
+          });
+        } else {
+          el.innerHTML = `<div style="text-align:center; padding:16px; color:#f59e0b; font-size:12px;">⚠️ 매칭 내역 조회 대기 (${res.status}): ${data.error?.message || '권한 확인 필요'}</div>`;
+        }
+      } catch (err) {
+        el.innerHTML = `<div style="text-align:center; padding:16px; color:#ef4444; font-size:12px;">⚠️ 네트워크 오류: 매칭 목록을 불러오지 못했습니다.</div>`;
+      }
+    }
+    loadConfirmedMatches();
+
+    async function viewCustomerContact(matchId) {
+      try {
+        const headers = {};
+        if (partnerKey) headers['X-SBK-Partner-Key'] = partnerKey;
+        const res = await fetch(`/api/v1/slotbridge/matches/${encodeURIComponent(matchId)}/contact`, { headers });
+        let data = {};
+        try { data = await res.json(); } catch (_) {}
+        if (res.ok && data.customer_contact) {
+          document.getElementById('contact-name').textContent = data.customer_contact.name || '고객';
+          document.getElementById('contact-phone').textContent = data.customer_contact.phone || '010-****-****';
+          document.getElementById('contact-location').textContent = (data.customer_contact.district || '') + ' ' + (data.customer_contact.neighborhood || '');
+          document.getElementById('contact-housing').textContent = (data.customer_contact.housing_type || '') + (data.customer_contact.area_pyeong ? ' (' + data.customer_contact.area_pyeong + '평)' : '');
+          document.getElementById('contact-date').textContent = (data.customer_contact.requested_date || '') + ' ' + (data.customer_contact.time_window || '');
+          document.getElementById('contact-modal').style.display = 'block';
+        } else {
+          alert('연락처 확인 실패 (' + res.status + '): ' + (data.error?.message || '열람 권한이 없거나 이미 파기되었습니다.'));
+        }
+      } catch (e) {
+        alert('네트워크 오류: 서버와 통신할 수 없습니다.');
+      }
+    }
+
+
     async function deleteSlot(slotId) {
       if (!confirm('정말 이 가용 슬롯을 취소/삭제하시겠습니까?')) return;
       try {
@@ -343,8 +432,20 @@
         let data = {};
         try { data = await res.json(); } catch (_) {}
         if (res.ok) {
-          alert('오퍼를 성공적으로 수락하여 매칭이 확정되었습니다!');
-          location.reload();
+          document.getElementById('offer-modal').style.display = 'none';
+          currentOfferId = null;
+          if (data.customer_contact) {
+            document.getElementById('contact-name').textContent = data.customer_contact.name || '고객';
+            document.getElementById('contact-phone').textContent = data.customer_contact.phone || '010-****-****';
+            document.getElementById('contact-location').textContent = (data.customer_contact.district || '') + ' ' + (data.customer_contact.neighborhood || '');
+            document.getElementById('contact-housing').textContent = (data.customer_contact.housing_type || '') + (data.customer_contact.area_pyeong ? ' (' + data.customer_contact.area_pyeong + '평)' : '');
+            document.getElementById('contact-date').textContent = (data.customer_contact.requested_date || '') + ' ' + (data.customer_contact.time_window || '');
+            document.getElementById('contact-modal').style.display = 'block';
+          } else {
+            alert('오퍼를 성공적으로 수락하여 매칭이 확정되었습니다!');
+          }
+          loadSlots();
+          loadConfirmedMatches();
         } else {
           btn.disabled = false;
           btn.textContent = '[수락하기] 고객 연락처 확인';
