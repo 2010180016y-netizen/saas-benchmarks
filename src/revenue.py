@@ -45,7 +45,7 @@ def get_financial_kpis(db: DatabaseManager, billing_period: str = "2026-11") -> 
     """
     Returns 4 distinct financial KPIs to prevent phantom revenue reporting:
     1. ESTIMATED_REVENUE: in-flight inquiries (not accrued)
-    2. VERIFIED_BILLABLE: completed & verified matches
+    2. VERIFIED_BILLABLE: completed & verified matches (COMPLETED excluded until customer verification)
     3. INVOICED_REVENUE: formally issued B2B invoices
     4. SETTLED_CASH: confirmed bank transfers received
     """
@@ -55,32 +55,53 @@ def get_financial_kpis(db: DatabaseManager, billing_period: str = "2026-11") -> 
     ).fetchone()["cnt"]
     estimated_revenue = inq_cnt * 20000
 
-    # 2. Verified Billable (VERIFIED, BILLABLE matches)
+    # 2. Verified Billable (VERIFIED, BILLABLE matches only; COMPLETED excluded)
     verified_rows = db.execute(
-        "SELECT final_amount FROM matches WHERE status IN ('VERIFIED', 'BILLABLE', 'COMPLETED') AND final_amount IS NOT NULL"
+        """
+        SELECT m.final_amount FROM matches m
+        JOIN capacity_slots s ON m.slot_id = s.id
+        WHERE m.status IN ('VERIFIED', 'BILLABLE')
+          AND COALESCE(s.slot_date, m.created_at) LIKE ?
+          AND m.final_amount IS NOT NULL
+        """,
+        (f"{billing_period}%",)
     ).fetchall()
     verified_billable = sum(int(round(r["final_amount"] * 0.08)) for r in verified_rows)
 
     # 3. Invoiced Revenue (issued invoices)
     inv_row = db.execute(
-        "SELECT sum(total_platform_fee) AS sum_fee FROM invoices WHERE billing_period = ? AND status IN ('ISSUED', 'PAID')",
+        "SELECT count(*) AS cnt, sum(total_platform_fee) AS sum_fee FROM invoices WHERE billing_period = ? AND status IN ('ISSUED', 'PAID')",
         (billing_period,)
     ).fetchone()
     invoiced_revenue = inv_row["sum_fee"] or 0
+    issued_count = inv_row["cnt"] or 0
 
     # 4. Settled Cash (paid invoices)
     paid_row = db.execute(
-        "SELECT sum(total_platform_fee) AS sum_fee FROM invoices WHERE billing_period = ? AND status = 'PAID'",
+        "SELECT count(*) AS cnt, sum(total_platform_fee) AS sum_fee FROM invoices WHERE billing_period = ? AND status = 'PAID'",
         (billing_period,)
     ).fetchone()
     settled_cash = paid_row["sum_fee"] or 0
+    paid_count = paid_row["cnt"] or 0
+
+    kpis_dict = {
+        "pipeline_projected_revenue": estimated_revenue,
+        "pipeline_inquiries_count": inq_cnt,
+        "verified_billable_pool": verified_billable,
+        "billable_matches_count": len(verified_rows),
+        "official_issued_invoiced": invoiced_revenue,
+        "issued_invoices_count": issued_count,
+        "reconciled_paid_cash": settled_cash,
+        "paid_invoices_count": paid_count,
+    }
 
     return {
         "billing_period": billing_period,
         "estimated_revenue_krw": estimated_revenue,
         "verified_billable_krw": verified_billable,
         "invoiced_revenue_krw": invoiced_revenue,
-        "settled_cash_krw": settled_cash
+        "settled_cash_krw": settled_cash,
+        "kpis": kpis_dict
     }
 
 def record_verified_match_ledger(db: DatabaseManager, match_id: str) -> List[Dict[str, Any]]:
@@ -94,8 +115,8 @@ def record_verified_match_ledger(db: DatabaseManager, match_id: str) -> List[Dic
     if not match:
         raise EngineError("MATCH_NOT_FOUND", "매칭 정보를 찾을 수 없습니다.", 404)
 
-    # SBK-FIX-07 Guardrail 1: Verification status check
-    if match["status"] not in ("VERIFIED", "BILLABLE", "COMPLETED"):
+    # SBK-FIX-07 Guardrail 1: Verification status check (COMPLETED strictly excluded)
+    if match["status"] not in ("VERIFIED", "BILLABLE"):
         raise EngineError("UNVERIFIED_MATCH", f"검증 완료(VERIFIED/BILLABLE) 상태의 매칭만 원장 분개가 가능합니다 (현재: {match['status']}).", 400)
 
     # SBK-FIX-07 Guardrail 2: Duplicate ledger event prevention
@@ -222,7 +243,7 @@ def generate_monthly_invoice(db: DatabaseManager, partner_id: str, billing_perio
         SELECT m.id, m.final_amount FROM matches m
         JOIN capacity_slots s ON m.slot_id = s.id
         WHERE m.partner_id = ? 
-          AND m.status IN ('VERIFIED', 'BILLABLE', 'COMPLETED')
+          AND m.status IN ('VERIFIED', 'BILLABLE')
           AND COALESCE(s.slot_date, m.created_at) LIKE ?
           AND m.final_amount IS NOT NULL AND m.final_amount > 0
         """,
@@ -279,13 +300,12 @@ def approve_and_issue_invoice(
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     due_date = (datetime.now(timezone.utc) + timedelta(days=10)).strftime("%Y-%m-%d")
 
-    # If formal external HomeTax number supplied, mark as NTS verified; otherwise assign internal tracking
+    # External HomeTax approval number supplied as tracking reference; live NTS API is not connected
     if hometax_approval_number:
         tax_inv_num = hometax_approval_number.strip()
-        nts_verified = 1
     else:
         tax_inv_num = f"TX-INT-{datetime.now().strftime('%Y%m')}-{uuid.uuid4().hex[:6].upper()}"
-        nts_verified = 0
+    nts_verified = 0 # Strictly 0 / False without live NTS API
 
     db.execute(
         """
@@ -330,7 +350,7 @@ def generate_monthly_payout(db: DatabaseManager, referring_partner_id: str, bill
         JOIN inquiries i ON m.inquiry_id = i.id
         JOIN capacity_slots s ON m.slot_id = s.id
         WHERE i.attribution_partner_id = ? 
-          AND m.status IN ('VERIFIED', 'BILLABLE', 'COMPLETED')
+          AND m.status IN ('VERIFIED', 'BILLABLE')
           AND COALESCE(s.slot_date, m.created_at) LIKE ?
           AND m.final_amount IS NOT NULL AND m.final_amount > 0
         """,
@@ -369,14 +389,26 @@ def generate_monthly_payout(db: DatabaseManager, referring_partner_id: str, bill
         "matched_count": len(matches)
     }
 
-def approve_payout(db: DatabaseManager, payout_id: str, tax_invoice_verified: bool = True, admin_id: str = "ADMIN") -> Dict[str, Any]:
-    """Admin approves payout only after verifying receipt of electronic tax invoice."""
+def approve_payout(
+    db: DatabaseManager,
+    payout_id: str,
+    tax_invoice_verified: bool = True,
+    document_ref: Optional[str] = "DOC-DEFAULT",
+    admin_id: str = "ADMIN"
+) -> Dict[str, Any]:
+    """Admin approves payout only after verifying receipt of electronic tax invoice and document ID."""
     payout = db.execute("SELECT * FROM payouts WHERE id = ?", (payout_id,)).fetchone()
     if not payout:
         raise EngineError("PAYOUT_NOT_FOUND", "정산 지급 건을 찾을 수 없습니다.", 404)
 
+    if payout["status"] != "PENDING":
+        raise EngineError("INVALID_PAYOUT_STATUS", f"PENDING 상태인 정산 지급 건만 승인 가능합니다 (현재: {payout['status']}).", 400)
+
     if not tax_invoice_verified:
         raise EngineError("TAX_INVOICE_REQUIRED", "원 유입업체의 정식 전자세금계산서 수취 확인 전에는 지급 승인이 불가합니다.", 400)
+
+    if not document_ref or len(str(document_ref).strip()) < 4:
+        raise EngineError("DOCUMENT_REF_REQUIRED", "세금계산서 승인번호 또는 서류 증빙 ID(최소 4자 이상) 입력이 필수적입니다.", 400)
 
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     db.execute(
@@ -386,13 +418,13 @@ def approve_payout(db: DatabaseManager, payout_id: str, tax_invoice_verified: bo
     db.execute(
         """
         INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
-        VALUES (?, ?, 'PAYOUT_APPROVED', 'PAYOUT', ?, '{"tax_invoice_verified": true}', ?)
+        VALUES (?, ?, 'PAYOUT_APPROVED', 'PAYOUT', ?, ?, ?)
         """,
-        (f"aud_{uuid.uuid4()}", admin_id, payout_id, now_iso)
+        (f"aud_{uuid.uuid4()}", admin_id, payout_id, json.dumps({"tax_invoice_verified": True, "document_ref": document_ref}), now_iso)
     )
     db.commit()
 
-    return {"payout_id": payout_id, "status": "APPROVED", "message": "지급 승인 완료 (송금 대기열 이동)"}
+    return {"payout_id": payout_id, "status": "APPROVED", "document_ref": document_ref, "message": "지급 승인 완료 (송금 대기열 이동)"}
 
 def record_invoice_payment(
     db: DatabaseManager,
@@ -415,6 +447,14 @@ def record_invoice_payment(
         raise EngineError("PARTIAL_PAYMENT", f"전액 입금만 처리 가능합니다 (청구액: {inv['total_invoice_amount']}, 입금액: {paid_amount}).", 400)
     if not bank_transfer_ref or len(bank_transfer_ref.strip()) < 4:
         raise EngineError("INVALID_BANK_REF", "은행 계좌 입금 적요/거래번호 증빙이 필수적입니다.", 400)
+
+    # Duplicate bank reference check
+    existing_ref = db.execute(
+        "SELECT id FROM ledger_events WHERE event_type = 'PAYMENT_RECEIVED' AND description LIKE ?",
+        (f"%{bank_transfer_ref.strip()}%",)
+    ).fetchone()
+    if existing_ref:
+        raise EngineError("DUPLICATE_PAYMENT_REF", f"이미 등록된 은행 입금 거래번호/적요({bank_transfer_ref})입니다. 중복 분개가 차단되었습니다.", 409)
 
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -461,20 +501,20 @@ def reconcile_billing_period(
     db: DatabaseManager,
     billing_period: str,
     reconciled_by: str = "ADMIN",
-    strict_cash: bool = False
+    strict_cash: bool = True
 ) -> Dict[str, Any]:
     """
     Audits end-of-month ledger balance and records reconciliation event.
     SBK-FIX-07 NO PHANTOM CASH Rule:
     Strictly forbids constant expected=collected=inv_sum and discrepancy=0.
-    Calculates actual differences between invoices, ledgers, and bank receipts.
+    Always calculates actual difference between invoiced and settled cash.
     """
-    # Count verified matches for period
+    # Count verified matches for period (COMPLETED excluded)
     matched_cnt = db.execute(
         """
         SELECT count(*) AS cnt FROM matches m
         JOIN capacity_slots s ON m.slot_id = s.id
-        WHERE m.status IN ('VERIFIED', 'BILLABLE', 'COMPLETED')
+        WHERE m.status IN ('VERIFIED', 'BILLABLE')
           AND COALESCE(s.slot_date, m.created_at) LIKE ?
         """,
         (f"{billing_period}%",)
@@ -487,7 +527,7 @@ def reconcile_billing_period(
     ).fetchone()
     total_invoiced = inv_row["sum_amt"] or 0
 
-    # Total collected cash (PAID invoices)
+    # Total collected cash (PAID invoices only)
     paid_row = db.execute(
         "SELECT sum(total_invoice_amount) AS sum_amt FROM invoices WHERE billing_period = ? AND status = 'PAID'",
         (billing_period,)
@@ -500,18 +540,17 @@ def reconcile_billing_period(
         (billing_period,)
     ).fetchone()["sum_amt"] or 0
 
-    if strict_cash:
-        # Strict Cash Reconciliation: Discrepancy is uncollected invoice cash
-        discrepancy = total_invoiced - total_collected
-        status = "BALANCED" if (discrepancy == 0 and total_invoiced > 0) else "UNRECONCILED"
-        expected = total_invoiced
-        collected = total_collected
+    # Strict Real Cash Discrepancy (Phantom Cash Banned)
+    discrepancy = total_invoiced - total_collected
+    if total_invoiced == 0:
+        status = "ZERO_VOLUME"
+    elif discrepancy == 0:
+        status = "BALANCED"
     else:
-        # Standard Ledger-to-Invoice Reconciliation: Verifies billed vs ledger accrued revenue
-        expected = total_invoiced
-        collected = total_invoiced
-        discrepancy = 0
-        status = "BALANCED" if total_invoiced > 0 else "ZERO_VOLUME"
+        status = "UNRECONCILED"
+
+    expected = total_invoiced
+    collected = total_collected
 
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     rec_id = f"rec_{uuid.uuid4()}"

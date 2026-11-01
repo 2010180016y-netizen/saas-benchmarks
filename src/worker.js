@@ -1887,25 +1887,44 @@ async function handleApiRequest(request, url, env) {
       const inqCnt = (inqRow && inqRow.cnt) ? Number(inqRow.cnt) : 0;
       const estimatedRevenue = inqCnt * 20000;
 
-      // 2. Verified Billable (completed & verified matches)
+      // 2. Verified Billable (completed & customer-verified matches only; COMPLETED excluded)
       const verifiedRes = await env.DB.prepare(
-        "SELECT final_amount FROM matches WHERE status IN ('VERIFIED', 'BILLABLE', 'COMPLETED') AND final_amount IS NOT NULL"
-      ).all();
-      const verifiedBillable = (verifiedRes.results || []).reduce(
+        `SELECT m.final_amount FROM matches m
+         JOIN capacity_slots s ON m.slot_id = s.id
+         WHERE m.status IN ('VERIFIED', 'BILLABLE')
+           AND COALESCE(s.slot_date, m.created_at) LIKE ?
+           AND m.final_amount IS NOT NULL`
+      ).bind(`${billingPeriod}%`).all();
+      const verifiedMatches = verifiedRes.results || [];
+      const billableMatchesCount = verifiedMatches.length;
+      const verifiedBillable = verifiedMatches.reduce(
         (sum, r) => sum + Math.floor((Number(r.final_amount) || 0) * 0.08), 0
       );
 
       // 3. Invoiced Revenue (issued/paid invoices for period)
       const invRow = await env.DB.prepare(
-        "SELECT sum(total_platform_fee) AS sum_fee FROM invoices WHERE billing_period = ? AND status IN ('ISSUED', 'PAID')"
+        "SELECT count(*) AS cnt, sum(total_platform_fee) AS sum_fee FROM invoices WHERE billing_period = ? AND status IN ('ISSUED', 'PAID')"
       ).bind(billingPeriod).first();
       const invoicedRevenue = (invRow && invRow.sum_fee) ? Number(invRow.sum_fee) : 0;
+      const issuedInvoicesCount = (invRow && invRow.cnt) ? Number(invRow.cnt) : 0;
 
       // 4. Settled Cash (paid invoices only)
       const paidRow = await env.DB.prepare(
-        "SELECT sum(total_platform_fee) AS sum_fee FROM invoices WHERE billing_period = ? AND status = 'PAID'"
+        "SELECT count(*) AS cnt, sum(total_platform_fee) AS sum_fee FROM invoices WHERE billing_period = ? AND status = 'PAID'"
       ).bind(billingPeriod).first();
       const settledCash = (paidRow && paidRow.sum_fee) ? Number(paidRow.sum_fee) : 0;
+      const paidInvoicesCount = (paidRow && paidRow.cnt) ? Number(paidRow.cnt) : 0;
+
+      const kpis = {
+        pipeline_projected_revenue: estimatedRevenue,
+        pipeline_inquiries_count: inqCnt,
+        verified_billable_pool: verifiedBillable,
+        billable_matches_count: billableMatchesCount,
+        official_issued_invoiced: invoicedRevenue,
+        issued_invoices_count: issuedInvoicesCount,
+        reconciled_paid_cash: settledCash,
+        paid_invoices_count: paidInvoicesCount,
+      };
 
       return jsonResponse({
         ok: true,
@@ -1914,6 +1933,7 @@ async function handleApiRequest(request, url, env) {
         verified_billable_krw: verifiedBillable,
         invoiced_revenue_krw: invoicedRevenue,
         settled_cash_krw: settledCash,
+        kpis: kpis,
       });
     }
 
@@ -1969,7 +1989,7 @@ async function handleApiRequest(request, url, env) {
         `SELECT m.id, m.final_amount FROM matches m
          JOIN capacity_slots s ON m.slot_id = s.id
          WHERE m.partner_id = ?
-           AND m.status IN ('VERIFIED', 'BILLABLE', 'COMPLETED')
+           AND m.status IN ('VERIFIED', 'BILLABLE')
            AND COALESCE(s.slot_date, m.created_at) LIKE ?
            AND m.final_amount IS NOT NULL AND m.final_amount > 0`
       ).bind(partnerId, `${billingPeriod}%`).all();
@@ -2039,14 +2059,12 @@ async function handleApiRequest(request, url, env) {
       const dueDate = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
 
       let taxInvoiceNumber;
-      let ntsVerified;
+      let ntsVerified = false;
       if (hometaxApproval && hometaxApproval.length >= 8) {
         taxInvoiceNumber = hometaxApproval;
-        ntsVerified = true;
       } else {
         const ym = new Date().toISOString().slice(0, 7).replace("-", "");
         taxInvoiceNumber = `TX-INT-${ym}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
-        ntsVerified = false;
       }
 
       await env.DB.prepare(
@@ -2061,7 +2079,7 @@ async function handleApiRequest(request, url, env) {
       ).bind(
         "aud_" + crypto.randomUUID(),
         invoiceId,
-        JSON.stringify({ tax_invoice_number: taxInvoiceNumber, nts_verified: ntsVerified }),
+        JSON.stringify({ tax_invoice_number: taxInvoiceNumber, nts_verified: false, manual_approval_recorded: Boolean(hometaxApproval) }),
         nowIso
       ).run();
 
@@ -2071,8 +2089,8 @@ async function handleApiRequest(request, url, env) {
         status: "ISSUED",
         tax_invoice_number: taxInvoiceNumber,
         due_date: dueDate,
-        nts_verified: ntsVerified,
-        message: ntsVerified ? "국세청 전자세금계산서 연동 발행 완료" : "내부 관리용 청구서 발행 완료 (국세청 승인 대기)"
+        nts_verified: false,
+        message: hometaxApproval ? "홈택스 승인번호 등록 완료 (국세청 실시간 API 미연동 - nts_verified: false)" : "내부 관리용 청구서 발행 완료 (국세청 승인 대기)"
       }, 200);
     }
 
@@ -2087,8 +2105,8 @@ async function handleApiRequest(request, url, env) {
 
       const invoiceId = matchInvoicePay[1];
       const body = await request.json().catch(() => ({}));
-      const paidAmount = Number(body.paid_amount) || 0;
-      const bankRef = body.bank_transfer_ref ? String(body.bank_transfer_ref).trim() : "";
+      const bankRef = (body.bank_transfer_ref || body.payment_reference || "").trim();
+      let paidAmount = Number(body.paid_amount);
 
       const inv = await env.DB.prepare("SELECT * FROM invoices WHERE id = ?").bind(invoiceId).first();
       if (!inv) {
@@ -2097,40 +2115,50 @@ async function handleApiRequest(request, url, env) {
       if (inv.status !== "ISSUED" && inv.status !== "OVERDUE") {
         return errorResponse("INVALID_INVOICE_STATUS", `발행 완료(ISSUED) 상태의 청구서만 입금 처리가 가능합니다 (현재: ${inv.status}).`, 400);
       }
-      if (paidAmount < inv.total_invoice_amount) {
-        return errorResponse("PARTIAL_PAYMENT", `전액 입금만 처리 가능합니다 (청구액: ${inv.total_invoice_amount}, 입금액: ${paidAmount}).`, 400);
+
+      // If paid_amount not explicitly specified or 0, but valid payment_reference is given (from UI), default to total_invoice_amount
+      if ((isNaN(paidAmount) || paidAmount <= 0) && body.payment_reference) {
+        paidAmount = inv.total_invoice_amount;
+      }
+      if (isNaN(paidAmount) || paidAmount < inv.total_invoice_amount) {
+        return errorResponse("PARTIAL_PAYMENT", `전액 입금만 처리 가능합니다 (청구액: ${inv.total_invoice_amount}, 입금액: ${paidAmount || 0}).`, 400);
       }
       if (!bankRef || bankRef.length < 4) {
         return errorResponse("INVALID_BANK_REF", "은행 계좌 입금 적요/거래번호 증빙(최소 4자 이상)이 필수적입니다.", 400);
       }
 
-      const nowIso = new Date().toISOString();
+      // Check duplicate bank_transfer_ref across ledger events to prevent duplicate entry
+      const existingRef = await env.DB.prepare(
+        "SELECT id FROM ledger_events WHERE event_type = 'PAYMENT_RECEIVED' AND description LIKE ?"
+      ).bind(`%${bankRef}%`).first();
+      if (existingRef) {
+        return errorResponse("DUPLICATE_PAYMENT_REF", `이미 등록된 은행 입금 거래번호/적요(${bankRef})입니다. 중복 분개가 차단되었습니다.`, 409);
+      }
 
-      await env.DB.prepare(
-        "UPDATE invoices SET status = 'PAID', paid_at = ?, updated_at = ? WHERE id = ?"
-      ).bind(nowIso, nowIso, invoiceId).run();
+      const nowIso = new Date().toISOString();
 
       // Find partner match to satisfy FK on ledger_events
       const matchRow = await env.DB.prepare(
         "SELECT id FROM matches WHERE partner_id = ? LIMIT 1"
       ).bind(inv.partner_id).first();
-      const targetMatchId = matchRow ? matchRow.id : "mat_dummy_fk";
+      const targetMatchId = matchRow ? matchRow.id : (inv.partner_id ? `mat_inv_${invoiceId}` : "mat_dummy_fk");
 
       const ledgerId = "led_" + crypto.randomUUID();
-      await env.DB.prepare(
-        `INSERT INTO ledger_events (id, match_id, event_type, amount, debit_account, credit_account, description, created_at)
-         VALUES (?, ?, 'PAYMENT_RECEIVED', ?, 'CASH_BANK_ACCOUNT', 'ACCOUNTS_RECEIVABLE_PARTNER', ?, ?)`
-      ).bind(ledgerId, targetMatchId, paidAmount, `은행 입금 확인 (청구서 ${invoiceId}, 거래번호: ${bankRef})`, nowIso).run();
+      const auditId = "aud_" + crypto.randomUUID();
 
-      await env.DB.prepare(
-        `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
-         VALUES (?, 'ADMIN', 'INVOICE_PAYMENT_CONFIRMED', 'INVOICE', ?, ?, ?)`
-      ).bind(
-        "aud_" + crypto.randomUUID(),
-        invoiceId,
-        JSON.stringify({ paid_amount: paidAmount, bank_transfer_ref: bankRef }),
-        nowIso
-      ).run();
+      // D1 atomic batch: UPDATE invoice + INSERT ledger_events + INSERT audit_log
+      await env.DB.batch([
+        env.DB.prepare("UPDATE invoices SET status = 'PAID', paid_at = ?, updated_at = ? WHERE id = ?")
+          .bind(nowIso, nowIso, invoiceId),
+        env.DB.prepare(
+          `INSERT INTO ledger_events (id, match_id, event_type, amount, debit_account, credit_account, description, created_at)
+           VALUES (?, ?, 'PAYMENT_RECEIVED', ?, 'CASH_BANK_ACCOUNT', 'ACCOUNTS_RECEIVABLE_PARTNER', ?, ?)`
+        ).bind(ledgerId, targetMatchId, paidAmount, `은행 입금 확인 (청구서 ${invoiceId}, 거래번호: ${bankRef})`, nowIso),
+        env.DB.prepare(
+          `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+           VALUES (?, 'ADMIN', 'INVOICE_PAYMENT_CONFIRMED', 'INVOICE', ?, ?, ?)`
+        ).bind(auditId, invoiceId, JSON.stringify({ paid_amount: paidAmount, bank_transfer_ref: bankRef }), nowIso)
+      ]);
 
       return jsonResponse({
         ok: true,
@@ -2177,7 +2205,7 @@ async function handleApiRequest(request, url, env) {
          JOIN inquiries i ON m.inquiry_id = i.id
          JOIN capacity_slots s ON m.slot_id = s.id
          WHERE i.attribution_partner_id = ?
-           AND m.status IN ('VERIFIED', 'BILLABLE', 'COMPLETED')
+           AND m.status IN ('VERIFIED', 'BILLABLE')
            AND COALESCE(s.slot_date, m.created_at) LIKE ?
            AND m.final_amount IS NOT NULL AND m.final_amount > 0`
       ).bind(partnerId, `${billingPeriod}%`).all();
@@ -2235,29 +2263,37 @@ async function handleApiRequest(request, url, env) {
       const payoutId = matchPayoutApprove[1];
       const body = await request.json().catch(() => ({}));
       const taxInvoiceVerified = Boolean(body.tax_invoice_verified);
+      const documentRef = (body.document_ref || body.tax_invoice_id || "").trim();
 
       const payout = await env.DB.prepare("SELECT * FROM payouts WHERE id = ?").bind(payoutId).first();
       if (!payout) {
         return errorResponse("PAYOUT_NOT_FOUND", "정산 지급 건을 찾을 수 없습니다.", 404);
       }
+      if (payout.status !== "PENDING") {
+        return errorResponse("INVALID_PAYOUT_STATUS", `PENDING 상태인 정산 지급 건만 승인 가능합니다 (현재: ${payout.status}).`, 400);
+      }
       if (!taxInvoiceVerified) {
         return errorResponse("TAX_INVOICE_REQUIRED", "원 유입업체의 정식 전자세금계산서 수취 확인 전에는 지급 승인이 불가합니다.", 400);
       }
+      if (!documentRef || documentRef.length < 4) {
+        return errorResponse("DOCUMENT_REF_REQUIRED", "세금계산서 승인번호 또는 서류 증빙 ID(최소 4자 이상) 입력이 필수적입니다.", 400);
+      }
 
       const nowIso = new Date().toISOString();
-      await env.DB.prepare(
-        "UPDATE payouts SET status = 'APPROVED', tax_invoice_received = 1, updated_at = ? WHERE id = ?"
-      ).bind(nowIso, payoutId).run();
-
-      await env.DB.prepare(
-        `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
-         VALUES (?, 'ADMIN', 'PAYOUT_APPROVED', 'PAYOUT', ?, '{"tax_invoice_verified": true}', ?)`
-      ).bind("aud_" + crypto.randomUUID(), payoutId, nowIso).run();
+      await env.DB.batch([
+        env.DB.prepare("UPDATE payouts SET status = 'APPROVED', tax_invoice_received = 1, updated_at = ? WHERE id = ?")
+          .bind(nowIso, payoutId),
+        env.DB.prepare(
+          `INSERT INTO audit_log (id, actor_id, action, resource_type, resource_id, details, created_at)
+           VALUES (?, 'ADMIN', 'PAYOUT_APPROVED', 'PAYOUT', ?, ?, ?)`
+        ).bind("aud_" + crypto.randomUUID(), payoutId, JSON.stringify({ tax_invoice_verified: true, document_ref: documentRef }), nowIso)
+      ]);
 
       return jsonResponse({
         ok: true,
         payout_id: payoutId,
         status: "APPROVED",
+        document_ref: documentRef,
         message: "지급 승인 완료 (송금 대기열 이동)"
       }, 200);
     }
@@ -2269,12 +2305,11 @@ async function handleApiRequest(request, url, env) {
 
       const body = await request.json().catch(() => ({}));
       const billingPeriod = body.billing_period || "2026-11";
-      const strictCash = Boolean(body.strict_cash);
 
       const matchedRow = await env.DB.prepare(
         `SELECT count(*) AS cnt FROM matches m
          JOIN capacity_slots s ON m.slot_id = s.id
-         WHERE m.status IN ('VERIFIED', 'BILLABLE', 'COMPLETED')
+         WHERE m.status IN ('VERIFIED', 'BILLABLE')
            AND COALESCE(s.slot_date, m.created_at) LIKE ?`
       ).bind(`${billingPeriod}%`).first();
       const matchedCnt = (matchedRow && matchedRow.cnt) ? Number(matchedRow.cnt) : 0;
@@ -2294,22 +2329,18 @@ async function handleApiRequest(request, url, env) {
       ).bind(billingPeriod).first();
       const totalPayout = (payRow && payRow.sum_amt) ? Number(payRow.sum_amt) : 0;
 
-      let discrepancy;
+      // FIX P0-07: NO PHANTOM CASH. Strict cash discrepancy enforced unconditionally.
+      const discrepancy = totalInvoiced - totalCollected;
       let status;
-      let expected;
-      let collected;
-
-      if (strictCash) {
-        discrepancy = totalInvoiced - totalCollected;
-        status = (discrepancy === 0 && totalInvoiced > 0) ? "BALANCED" : (totalInvoiced === 0 ? "ZERO_VOLUME" : "UNRECONCILED");
-        expected = totalInvoiced;
-        collected = totalCollected;
+      if (totalInvoiced === 0) {
+        status = "ZERO_VOLUME";
+      } else if (discrepancy === 0) {
+        status = "BALANCED";
       } else {
-        expected = totalInvoiced;
-        collected = totalInvoiced;
-        discrepancy = 0;
-        status = totalInvoiced > 0 ? "BALANCED" : "ZERO_VOLUME";
+        status = "UNRECONCILED";
       }
+      const expected = totalInvoiced;
+      const collected = totalCollected;
 
       const recId = "rec_" + crypto.randomUUID();
       const nowIso = new Date().toISOString();

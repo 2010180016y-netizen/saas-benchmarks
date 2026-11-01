@@ -155,15 +155,27 @@ class TestRevenueAndReconciliation(unittest.TestCase):
         self.assertEqual(app["status"], "APPROVED")
 
     def test_10_month_end_reconciliation(self):
-        """Month-end reconciliation checks matches, invoices, payouts and creates BALANCED audit event."""
+        """Month-end reconciliation checks matches, invoices, payouts and creates BALANCED audit event after settlement."""
         self._create_verified_match_with_attribution("mat_rec_10")
-        generate_monthly_invoice(self.db, "partner_gw_cleanhome", "2026-11")
+        inv = generate_monthly_invoice(self.db, "partner_gw_cleanhome", "2026-11")
         generate_monthly_payout(self.db, "partner_sl_master", "2026-11")
 
+        # Prior to cash settlement, reconciliation is strictly UNRECONCILED (Phantom Cash Banned)
+        rec_unsettled = reconcile_billing_period(self.db, "2026-11", reconciled_by="ADMIN_HOEGI")
+        self.assertEqual(rec_unsettled["status"], "UNRECONCILED")
+        self.assertEqual(rec_unsettled["discrepancy_amount"], 22000)
+
+        # Settle invoice via bank transfer
+        approve_and_issue_invoice(self.db, inv["invoice_id"], admin_id="ADMIN_HOEGI")
+        from src.revenue import record_invoice_payment
+        record_invoice_payment(self.db, inv["invoice_id"], paid_amount=22000, bank_transfer_ref="KB_TX_REC_10")
+
+        # After settlement, reconciliation reaches BALANCED with 0 discrepancy
         rec = reconcile_billing_period(self.db, "2026-11", reconciled_by="ADMIN_HOEGI")
         self.assertEqual(rec["status"], "BALANCED")
         self.assertEqual(rec["discrepancy_amount"], 0)
         self.assertGreater(rec["total_revenue_expected"], 0)
+        self.assertEqual(rec["total_revenue_collected"], 22000)
 
 if __name__ == "__main__":
     unittest.main()
