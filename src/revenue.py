@@ -223,10 +223,10 @@ def generate_monthly_invoice(db: DatabaseManager, partner_id: str, billing_perio
         JOIN capacity_slots s ON m.slot_id = s.id
         WHERE m.partner_id = ? 
           AND m.status IN ('VERIFIED', 'BILLABLE', 'COMPLETED')
-          AND (s.slot_date LIKE ? OR m.created_at LIKE ?)
+          AND COALESCE(s.slot_date, m.created_at) LIKE ?
           AND m.final_amount IS NOT NULL AND m.final_amount > 0
         """,
-        (partner_id, f"{billing_period}%", f"{billing_period}%")
+        (partner_id, f"{billing_period}%")
     ).fetchall()
 
     total_volume = sum(r["final_amount"] for r in matches)
@@ -331,10 +331,10 @@ def generate_monthly_payout(db: DatabaseManager, referring_partner_id: str, bill
         JOIN capacity_slots s ON m.slot_id = s.id
         WHERE i.attribution_partner_id = ? 
           AND m.status IN ('VERIFIED', 'BILLABLE', 'COMPLETED')
-          AND (s.slot_date LIKE ? OR m.created_at LIKE ?)
+          AND COALESCE(s.slot_date, m.created_at) LIKE ?
           AND m.final_amount IS NOT NULL AND m.final_amount > 0
         """,
-        (referring_partner_id, f"{billing_period}%", f"{billing_period}%")
+        (referring_partner_id, f"{billing_period}%")
     ).fetchall()
 
     total_service = sum(r["final_amount"] for r in matches)
@@ -475,9 +475,9 @@ def reconcile_billing_period(
         SELECT count(*) AS cnt FROM matches m
         JOIN capacity_slots s ON m.slot_id = s.id
         WHERE m.status IN ('VERIFIED', 'BILLABLE', 'COMPLETED')
-          AND (s.slot_date LIKE ? OR m.created_at LIKE ?)
+          AND COALESCE(s.slot_date, m.created_at) LIKE ?
         """,
-        (f"{billing_period}%", f"{billing_period}%")
+        (f"{billing_period}%",)
     ).fetchone()["cnt"]
 
     # Total invoiced

@@ -98,9 +98,9 @@
     </header>
 
     <!-- SBK-FIX-01: 정직한 UI 게이트 (시연 화면 안내) -->
-    <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 12px; color: #fbbf24; line-height: 1.5;">
+    <div id="demo-banner" style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 12px; color: #fbbf24; line-height: 1.5;">
       ⚠️ <strong>[시뮬레이션 모크업 화면]</strong><br>
-      본 화면은 매칭 및 철회 플로우를 시연하는 데모 페이지입니다. 실제 청소팀에 오더가 발송되지 않았으며, 백엔드 API 연동(FIX-02) 전까지 실데이터는 서버에 저장되지 않습니다.
+      본 화면은 매칭 및 철회 플로우를 시연하는 데모 페이지입니다. 실제 청소팀에 오더가 발송되지 않았으며, 백엔드 API 연동 전까지 실데이터는 서버에 저장되지 않습니다.
     </div>
 
     <div class="card" id="main-card">
@@ -118,7 +118,7 @@
       </div>
       <div class="info-row">
         <span class="info-label">공간 형태</span>
-        <span class="info-val">원룸 8평</span>
+        <span class="info-val" id="disp-housing">원룸 8평</span>
       </div>
       <div class="info-row">
         <span class="info-label">배정 현황</span>
@@ -143,8 +143,11 @@
 
   <script>
     const params = new URLSearchParams(window.location.search);
-    const token = params.get('token') || 'DEMO_' + Math.random().toString(36).substring(2, 10).toUpperCase();
-    document.getElementById('disp-token').textContent = token.substring(0, 16) + '...';
+    const tokenParam = params.get('token');
+    const isDemo = params.get('demo') === 'true' || (!tokenParam) || tokenParam.startsWith('DEMO_');
+    const token = tokenParam || 'DEMO_' + Math.random().toString(36).substring(2, 10).toUpperCase();
+
+    document.getElementById('disp-token').textContent = token.substring(0, 16) + (token.length > 16 ? '...' : '');
     if (params.get('date')) {
       document.getElementById('disp-date').textContent = params.get('date');
     }
@@ -152,45 +155,85 @@
       document.getElementById('disp-area').textContent = '서울 ' + params.get('dist');
     }
 
-    // SBK-FIX-02: Load Real Status from API if available
+    if (!isDemo) {
+      document.getElementById('demo-banner').style.display = 'none';
+      document.getElementById('badge-status').textContent = '실시간 상태 조회 중...';
+      document.getElementById('badge-status').style.background = 'rgba(59, 130, 246, 0.15)';
+      document.getElementById('badge-status').style.color = '#60a5fa';
+      document.getElementById('badge-status').style.borderColor = 'rgba(59, 130, 246, 0.3)';
+      document.getElementById('disp-match').textContent = '서버에서 실시간 매칭 상태를 확인하고 있습니다...';
+      document.getElementById('disp-match').style.color = '#93c5fd';
+    }
+
     async function loadStatus() {
-      if (token.startsWith('DEMO_')) return;
+      if (isDemo) return;
       try {
-        const res = await fetch('/api/v1/slotbridge/inquiries/' + token);
+        const res = await fetch('/api/v1/slotbridge/inquiries/' + encodeURIComponent(token));
+        let data = {};
+        try { data = await res.json(); } catch (_) {}
         if (res.ok) {
-          const data = await res.json();
-          document.getElementById('badge-status').textContent = '실시간 D1 연동됨 (' + data.status + ')';
+          const st = data.status || 'SUBMITTED';
+          document.getElementById('badge-status').textContent = '실시간 D1 연동됨 (' + st + ')';
           document.getElementById('badge-status').style.background = 'rgba(16, 185, 129, 0.15)';
           document.getElementById('badge-status').style.color = '#34d399';
           document.getElementById('badge-status').style.borderColor = 'rgba(16, 185, 129, 0.3)';
-          document.getElementById('disp-match').textContent = data.status === 'SUBMITTED' ? '관내 1순위 청소팀 배정 진행 중' : data.status;
-          document.getElementById('disp-match').style.color = '#34d399';
+          
+          if (st === 'SUBMITTED') {
+            document.getElementById('disp-match').textContent = '관내 1순위 청소팀 배정 진행 중';
+            document.getElementById('disp-match').style.color = '#34d399';
+          } else if (st === 'CANCELLED') {
+            document.getElementById('disp-match').textContent = '신청 취소됨 (개인정보 D1 영구 파기 완료)';
+            document.getElementById('disp-match').style.color = '#f87171';
+            document.querySelector('.action-box').style.display = 'none';
+            document.getElementById('erased-banner').style.display = 'block';
+          } else {
+            document.getElementById('disp-match').textContent = st;
+            document.getElementById('disp-match').style.color = '#34d399';
+          }
+
+          if (data.requested_date) {
+            document.getElementById('disp-date').textContent = data.requested_date + (data.requested_time_window ? ` (${data.requested_time_window})` : '');
+          }
+          if (data.district) {
+            document.getElementById('disp-area').textContent = `서울 ${data.district} ${data.neighborhood || ''}`.trim();
+          }
+          if (data.housing_type) {
+            document.getElementById('disp-housing').textContent = `${data.housing_type} ${data.area_pyeong || ''}평`.trim();
+          }
+        } else if (res.status === 404) {
+          document.getElementById('badge-status').textContent = '신청 내역 없음 (404)';
+          document.getElementById('badge-status').style.background = 'rgba(239, 68, 68, 0.15)';
+          document.getElementById('badge-status').style.color = '#f87171';
+          document.getElementById('badge-status').style.borderColor = 'rgba(239, 68, 68, 0.3)';
+          document.getElementById('disp-match').textContent = '해당 접수 번호의 신청 내역을 서버에서 찾을 수 없습니다.';
+          document.getElementById('disp-match').style.color = '#f87171';
+          document.querySelector('.action-box').style.display = 'none';
+        } else if (res.status === 503) {
+          document.getElementById('badge-status').textContent = '서버 점검/승인 대기 (503)';
+          document.getElementById('badge-status').style.background = 'rgba(245, 158, 11, 0.15)';
+          document.getElementById('badge-status').style.color = '#fbbf24';
+          document.getElementById('badge-status').style.borderColor = 'rgba(245, 158, 11, 0.3)';
+          document.getElementById('disp-match').textContent = '서버 점검 중 또는 운영자 승인 대기 상태입니다: ' + (data.error?.message || '잠시 후 다시 조회해 주세요.');
+          document.getElementById('disp-match').style.color = '#fbbf24';
+        } else {
+          document.getElementById('badge-status').textContent = '상태 조회 실패 (' + res.status + ')';
+          document.getElementById('disp-match').textContent = data.error?.message || '상태 정보를 불러오지 못했습니다.';
         }
       } catch (err) {
-        console.warn('API fetch offline, using URL params');
+        console.error('API fetch error:', err);
+        document.getElementById('badge-status').textContent = '네트워크 조회 실패';
+        document.getElementById('badge-status').style.background = 'rgba(245, 158, 11, 0.15)';
+        document.getElementById('badge-status').style.color = '#fbbf24';
+        document.getElementById('disp-match').textContent = '네트워크 연결을 확인한 후 페이지를 새로고침해 주세요.';
+        document.getElementById('disp-match').style.color = '#fbbf24';
       }
     }
     loadStatus();
 
     async function executeRevocation() {
-      if (confirm("정말 신청을 취소하고 개인정보를 즉시 영구 파기하시겠습니까?")) {
-        try {
-          const res = await fetch('/api/v1/slotbridge/inquiries/' + token, { method: 'DELETE' });
-          if (res.ok) {
-            document.getElementById('main-card').style.display = 'none';
-            document.getElementById('badge-status').textContent = '신청 취소됨 (개인정보 D1 영구 파기 완료)';
-            document.getElementById('badge-status').style.background = 'rgba(239, 68, 68, 0.15)';
-            document.getElementById('badge-status').style.color = '#f87171';
-            document.getElementById('badge-status').style.borderColor = 'rgba(239, 68, 68, 0.3)';
-            document.getElementById('erased-banner').innerHTML = '<strong>🗑️ 개인정보 완전 파기 완료 (D1 Tombstone)</strong><br>고객님의 요청에 따라 데이터베이스에서 성명, 연락처가 난수로 덮어쓰여 영구 삭제되었습니다.';
-            document.getElementById('erased-banner').style.display = 'block';
-            return;
-          }
-        } catch (err) {
-          console.warn('API delete offline, fallback to demo notice');
-        }
+      if (!confirm("정말 신청을 취소하고 개인정보를 즉시 영구 파기하시겠습니까?")) return;
 
-        // Demo fallback
+      if (isDemo) {
         document.getElementById('main-card').style.display = 'none';
         document.getElementById('badge-status').textContent = '데모 취소 완료 (실제 데이터 없음)';
         document.getElementById('badge-status').style.background = 'rgba(239, 68, 68, 0.15)';
@@ -198,6 +241,38 @@
         document.getElementById('badge-status').style.borderColor = 'rgba(239, 68, 68, 0.3)';
         document.getElementById('erased-banner').innerHTML = '<strong>🗑️ 데모 취소 시뮬레이션 완료</strong><br>실제 서버나 데이터베이스에 저장된 내역이 없는 데모 상태입니다. (실제 데이터베이스 호출 없음)';
         document.getElementById('erased-banner').style.display = 'block';
+        return;
+      }
+
+      const revokeBtn = document.querySelector('.btn-revoke');
+      revokeBtn.disabled = true;
+      revokeBtn.textContent = '취소 및 파기 처리 중...';
+
+      try {
+        const res = await fetch('/api/v1/slotbridge/inquiries/' + encodeURIComponent(token), { method: 'DELETE' });
+        let data = {};
+        try { data = await res.json(); } catch (_) {}
+        if (res.ok) {
+          document.getElementById('main-card').style.display = 'none';
+          document.getElementById('badge-status').textContent = '신청 취소됨 (개인정보 D1 영구 파기 완료)';
+          document.getElementById('badge-status').style.background = 'rgba(239, 68, 68, 0.15)';
+          document.getElementById('badge-status').style.color = '#f87171';
+          document.getElementById('badge-status').style.borderColor = 'rgba(239, 68, 68, 0.3)';
+          document.getElementById('erased-banner').innerHTML = '<strong>🗑️ 개인정보 완전 파기 완료 (D1 Tombstone)</strong><br>고객님의 요청에 따라 데이터베이스에서 성명, 연락처가 난수로 덮어쓰여 영구 삭제되었습니다.';
+          document.getElementById('erased-banner').style.display = 'block';
+          return;
+        } else {
+          revokeBtn.disabled = false;
+          revokeBtn.textContent = '신청 취소 및 개인정보 즉시 영구 파기';
+          alert('취소 처리 실패 (' + res.status + '): ' + (data.error?.message || '서버 오류로 인해 취소되지 않았습니다. 다시 시도해 주세요.'));
+          return;
+        }
+      } catch (err) {
+        console.error('API delete error:', err);
+        revokeBtn.disabled = false;
+        revokeBtn.textContent = '신청 취소 및 개인정보 즉시 영구 파기';
+        alert('네트워크 오류: 서버와 통신할 수 없습니다. 인터넷 연결을 확인 후 다시 시도해 주세요.');
+        return;
       }
     }
   </script>

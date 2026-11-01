@@ -1548,9 +1548,9 @@ async function handleApiRequest(request, url, env) {
          JOIN capacity_slots s ON m.slot_id = s.id
          WHERE m.partner_id = ?
            AND m.status IN ('VERIFIED', 'BILLABLE', 'COMPLETED')
-           AND (s.slot_date LIKE ? OR m.created_at LIKE ?)
+           AND COALESCE(s.slot_date, m.created_at) LIKE ?
            AND m.final_amount IS NOT NULL AND m.final_amount > 0`
-      ).bind(partnerId, `${billingPeriod}%`, `${billingPeriod}%`).all();
+      ).bind(partnerId, `${billingPeriod}%`).all();
 
       const matches = matchesRes.results || [];
       const totalVolume = matches.reduce((sum, r) => sum + (Number(r.final_amount) || 0), 0);
@@ -1747,9 +1747,9 @@ async function handleApiRequest(request, url, env) {
          JOIN capacity_slots s ON m.slot_id = s.id
          WHERE i.attribution_partner_id = ?
            AND m.status IN ('VERIFIED', 'BILLABLE', 'COMPLETED')
-           AND (s.slot_date LIKE ? OR m.created_at LIKE ?)
+           AND COALESCE(s.slot_date, m.created_at) LIKE ?
            AND m.final_amount IS NOT NULL AND m.final_amount > 0`
-      ).bind(partnerId, `${billingPeriod}%`, `${billingPeriod}%`).all();
+      ).bind(partnerId, `${billingPeriod}%`).all();
 
       const matches = matchesRes.results || [];
       const totalService = matches.reduce((sum, r) => sum + (Number(r.final_amount) || 0), 0);
@@ -1841,8 +1841,8 @@ async function handleApiRequest(request, url, env) {
         `SELECT count(*) AS cnt FROM matches m
          JOIN capacity_slots s ON m.slot_id = s.id
          WHERE m.status IN ('VERIFIED', 'BILLABLE', 'COMPLETED')
-           AND (s.slot_date LIKE ? OR m.created_at LIKE ?)`
-      ).bind(`${billingPeriod}%`, `${billingPeriod}%`).first();
+           AND COALESCE(s.slot_date, m.created_at) LIKE ?`
+      ).bind(`${billingPeriod}%`).first();
       const matchedCnt = (matchedRow && matchedRow.cnt) ? Number(matchedRow.cnt) : 0;
 
       const invRow = await env.DB.prepare(

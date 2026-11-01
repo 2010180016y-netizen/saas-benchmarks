@@ -365,20 +365,24 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        const data = await res.json();
+        let data = {};
+        try { data = await res.json(); } catch (_) {}
         if (res.ok && data.status_token) {
-          window.location.href = `status.html?token=${data.status_token}&date=${encodeURIComponent(payload.requested_date)}&dist=${encodeURIComponent(payload.district)}`;
+          window.location.href = `status.html?token=${encodeURIComponent(data.status_token)}&date=${encodeURIComponent(payload.requested_date)}&dist=${encodeURIComponent(payload.district)}`;
           return;
         } else {
-          alert('신청 접수 안내: ' + (data.error?.message || '접수 처리 중 오류가 발생했습니다.'));
+          submitBtn.disabled = false;
+          submitBtn.textContent = '24~72h 급행 잔여 슬롯 매칭 신청';
+          alert('신청 접수 실패 (' + res.status + '): ' + (data.error?.message || '접수 처리 중 오류가 발생했습니다. 다시 시도해 주세요.'));
+          return;
         }
       } catch (err) {
-        console.warn('API fetch offline:', err);
+        console.error('API fetch error:', err);
+        submitBtn.disabled = false;
+        submitBtn.textContent = '24~72h 급행 잔여 슬롯 매칭 신청';
+        alert('네트워크 연결 오류: 서버와 통신할 수 없습니다. 연결 상태를 확인 후 다시 시도해 주세요.');
+        return;
       }
-
-      // Honest Demo Fallback
-      const mockToken = 'DEMO_' + Math.random().toString(36).substring(2, 10).toUpperCase();
-      window.location.href = `status.html?demo=true&token=${mockToken}&date=${encodeURIComponent(payload.requested_date)}&dist=${encodeURIComponent(payload.district)}`;
     });
   </script>
 </body>
