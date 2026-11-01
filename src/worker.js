@@ -120,11 +120,56 @@ async function hashPhoneNumber(phone, env) {
     .join("");
 }
 
+async function generatePartnerAuthToken(partnerId, env) {
+  const secret = env.SBK_ENCRYPTION_KEY;
+  if (!secret || typeof secret !== "string" || secret.trim().length === 0) {
+    const err = new Error("SERVER_CONFIG_ERROR: Secret key required for partner auth token derivation (Fail-Closed).");
+    err.status = 503;
+    throw err;
+  }
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const payload = `sbk_partner_auth_v1:${partnerId}`;
+  const sigBuffer = await crypto.subtle.sign("HMAC", key, enc.encode(payload));
+  const sig = Array.from(new Uint8Array(sigBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 32);
+  return `sbk_ptk_${partnerId}_${sig}`;
+}
+
+async function verifyPartnerAuthToken(partnerKey, partnerId, env) {
+  if (!partnerKey || typeof partnerKey !== "string" || !partnerKey.startsWith("sbk_ptk_")) {
+    return false;
+  }
+  const secret = env.SBK_ENCRYPTION_KEY;
+  if (!secret || typeof secret !== "string" || secret.trim().length === 0) {
+    return false;
+  }
+  try {
+    const expected = await generatePartnerAuthToken(partnerId, env);
+    return partnerKey === expected;
+  } catch (_) {
+    return false;
+  }
+}
+
 async function verifyAttributionToken(token, env) {
-  if (!token || token.split(":").length !== 4) return null;
+  if (!token || typeof token !== "string" || token.split(":").length !== 4) return null;
   const [partnerId, campaignId, expStr, sig] = token.split(":");
   const expiresAt = parseInt(expStr, 10);
   if (isNaN(expiresAt) || Date.now() / 1000 > expiresAt) return null;
+
+  // SBK-FIX-A (P0-02): Enforce strict signature length and hex characters (prevent empty or truncated sig match)
+  if (!sig || (sig.length !== 32 && sig.length !== 64) || !/^[0-9a-f]+$/i.test(sig)) {
+    return null;
+  }
 
   const secret = env.SBK_ATTRIBUTION_SECRET;
   if (!secret || typeof secret !== "string" || secret.trim().length === 0) {
@@ -141,12 +186,12 @@ async function verifyAttributionToken(token, env) {
   );
   const payload = `${partnerId}:${campaignId}:${expiresAt}`;
   const sigBuffer = await crypto.subtle.sign("HMAC", key, enc.encode(payload));
-  const expectedSig = Array.from(new Uint8Array(sigBuffer))
+  const fullSigHex = Array.from(new Uint8Array(sigBuffer))
     .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")
-    .slice(0, sig.length);
+    .join("");
 
-  if (sig !== expectedSig) return null;
+  const expectedSig = sig.length === 32 ? fullSigHex.slice(0, 32) : fullSigHex;
+  if (sig.toLowerCase() !== expectedSig.toLowerCase()) return null;
   return { partnerId, campaignId, expiresAt };
 }
 
@@ -407,21 +452,16 @@ async function handleApiRequest(request, url, env) {
       return errorResponse("PARTNER_ID_REQUIRED", "partner_id 파라미터가 필요합니다.", 400);
     }
 
-    // SBK-MINI-05: Block unauthenticated public token generation (anti-impersonation)
-    const adminKey = request.headers.get("X-SBK-Admin-Key") || url.searchParams.get("admin_key");
-    const partnerKey = request.headers.get("X-SBK-Partner-Key") || url.searchParams.get("partner_key");
+    // SBK-FIX-A (P0-01): Block unauthenticated token generation. Header-only authentication (no URL params, no business number)
+    const adminKey = request.headers.get("X-SBK-Admin-Key");
+    const partnerKey = request.headers.get("X-SBK-Partner-Key");
     const expectedAdminKey = env.SBK_ADMIN_KEY;
 
     let isAuthorized = false;
     if (expectedAdminKey && adminKey === expectedAdminKey) {
       isAuthorized = true;
     } else if (partnerKey) {
-      const partnerRow = await env.DB.prepare(
-        "SELECT id, business_number FROM partners WHERE id = ?"
-      ).bind(partnerId).first();
-      if (partnerRow && (partnerKey === partnerRow.business_number || partnerKey === env.SBK_ATTRIBUTION_SECRET)) {
-        isAuthorized = true;
-      }
+      isAuthorized = await verifyPartnerAuthToken(partnerKey, partnerId, env);
     }
 
     if (!isAuthorized) {
@@ -769,22 +809,21 @@ async function handleApiRequest(request, url, env) {
       if (!name || name.length < 2) {
         return errorResponse("INVALID_NAME", "상호명을 2자 이상 입력해 주세요.", 400);
       }
-      if (bizNum.length !== 10) {
-        return errorResponse("INVALID_BIZ_NUMBER", "사업자등록번호는 10자리 숫자여야 합니다.", 400);
+      // Business number: 10 digits if provided; if unregistered individual pilot, assign unique pilot ID
+      let bizNum = (body.business_number || "").replace(/[^0-9]/g, "");
+      if (bizNum.length > 0 && bizNum.length !== 10) {
+        return errorResponse("INVALID_BIZ_NUMBER", "사업자등록번호는 10자리 숫자여야 합니다 (개인 파일럿은 비워둘 수 있습니다).", 400);
       }
-      if (!/^010-\d{4}-\d{4}$/.test(phone)) {
-        return errorResponse("INVALID_PHONE", "연락처는 010-XXXX-XXXX 형식이어야 합니다.", 400);
-      }
-      if (!rep) {
-        return errorResponse("INVALID_REP", "대표자명을 입력해 주세요.", 400);
-      }
-
-      // SBK-MINI-06: Business number duplicate check
-      const existingPartner = await env.DB.prepare(
-        "SELECT id, name FROM partners WHERE business_number = ?"
-      ).bind(bizNum).first();
-      if (existingPartner) {
-        return errorResponse("DUPLICATE_PARTNER", "이미 등록된 사업자등록번호입니다.", 409);
+      if (!bizNum) {
+        bizNum = "INDIV_" + crypto.randomUUID().replace(/-/g, "").slice(0, 10);
+      } else {
+        // Business number duplicate check
+        const existingPartner = await env.DB.prepare(
+          "SELECT id, name FROM partners WHERE business_number = ?"
+        ).bind(bizNum).first();
+        if (existingPartner) {
+          return errorResponse("DUPLICATE_PARTNER", "이미 등록된 사업자등록번호입니다.", 409);
+        }
       }
 
       const orgId = "org_" + crypto.randomUUID();
@@ -807,14 +846,20 @@ async function handleApiRequest(request, url, env) {
         .bind(partnerId, orgId, name, partnerType, bizNum, rep, phone, nowIso, nowIso)
         .run();
 
+      let partnerKey = "";
+      try {
+        partnerKey = await generatePartnerAuthToken(partnerId, env);
+      } catch (_) {}
+
       return jsonResponse(
         {
           ok: true,
           partner_id: partnerId,
+          partner_key: partnerKey,
           name,
           partner_type: partnerType,
           status: "PENDING_APPROVAL",
-          message: "파트너 제휴 신청이 정상 접수되었습니다. 관리자 서류 심사 대기 중입니다.",
+          message: "파트너 제휴 신청이 정상 접수되었습니다. 발급된 파트너 보안 인증 키(partner_key)를 안전하게 보관하세요.",
         },
         201
       );
@@ -840,11 +885,11 @@ async function handleApiRequest(request, url, env) {
       return errorResponse("PARTNER_NOT_FOUND", "파트너 정보를 찾을 수 없습니다.", 404);
     }
 
-    // Auth & Ownership Check
-    const partnerKey = request.headers.get("X-SBK-Partner-Key") || url.searchParams.get("partner_key");
-    const adminKey = request.headers.get("X-SBK-Admin-Key") || url.searchParams.get("admin_key");
+    // SBK-FIX-A (P0-01): Auth & Ownership Check via secure token header only
+    const partnerKey = request.headers.get("X-SBK-Partner-Key");
+    const adminKey = request.headers.get("X-SBK-Admin-Key");
     const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
-    const isOwner = partnerKey && (partnerKey === partner.business_number || partnerKey === env.SBK_ATTRIBUTION_SECRET);
+    const isOwner = partnerKey && (await verifyPartnerAuthToken(partnerKey, partnerId, env));
 
     if (!isAdmin && !isOwner) {
       return errorResponse("FORBIDDEN", "본인 소유의 파트너 슬롯만 조회할 수 있습니다.", 403);
@@ -894,11 +939,11 @@ async function handleApiRequest(request, url, env) {
         return errorResponse("UNAPPROVED_PARTNER", "관리자 서류 심사가 완료된 승인 파트너만 가용 슬롯을 등록할 수 있습니다.", 403);
       }
 
-      // Auth & Ownership Check
-      const partnerKey = request.headers.get("X-SBK-Partner-Key") || body.partner_key;
-      const adminKey = request.headers.get("X-SBK-Admin-Key") || body.admin_key;
+      // SBK-FIX-A (P0-01): Auth & Ownership Check via secure token header only
+      const partnerKey = request.headers.get("X-SBK-Partner-Key");
+      const adminKey = request.headers.get("X-SBK-Admin-Key");
       const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
-      const isOwner = partnerKey && (partnerKey === partner.business_number || partnerKey === env.SBK_ATTRIBUTION_SECRET);
+      const isOwner = partnerKey && (await verifyPartnerAuthToken(partnerKey, partnerId, env));
 
       if (!isAdmin && !isOwner) {
         return errorResponse("FORBIDDEN", "본인 소유의 파트너 계정만 슬롯을 등록할 수 있습니다.", 403);
@@ -989,17 +1034,16 @@ async function handleApiRequest(request, url, env) {
     if (dbErr) return dbErr;
 
     const slotId = matchSlotDelete[1];
-    const partnerKey = request.headers.get("X-SBK-Partner-Key") || url.searchParams.get("partner_key");
-    const adminKey = request.headers.get("X-SBK-Admin-Key") || url.searchParams.get("admin_key");
+    const partnerKey = request.headers.get("X-SBK-Partner-Key");
+    const adminKey = request.headers.get("X-SBK-Admin-Key");
 
     const slot = await env.DB.prepare("SELECT * FROM capacity_slots WHERE id = ?").bind(slotId).first();
     if (!slot) {
       return errorResponse("SLOT_NOT_FOUND", "해당 슬롯을 찾을 수 없습니다.", 404);
     }
 
-    const partner = await env.DB.prepare("SELECT id, business_number FROM partners WHERE id = ?").bind(slot.partner_id).first();
     const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
-    const isOwner = partner && partnerKey && (partnerKey === partner.business_number || partnerKey === env.SBK_ATTRIBUTION_SECRET);
+    const isOwner = partnerKey && (await verifyPartnerAuthToken(partnerKey, slot.partner_id, env));
 
     if (!isAdmin && !isOwner) {
       return errorResponse("FORBIDDEN", "본인 소유의 슬롯만 취소할 수 있습니다.", 403);
@@ -1048,10 +1092,10 @@ async function handleApiRequest(request, url, env) {
       return errorResponse("PARTNER_NOT_FOUND", "파트너 정보를 찾을 수 없습니다.", 404);
     }
 
-    const partnerKey = request.headers.get("X-SBK-Partner-Key") || url.searchParams.get("partner_key");
-    const adminKey = request.headers.get("X-SBK-Admin-Key") || url.searchParams.get("admin_key");
+    const partnerKey = request.headers.get("X-SBK-Partner-Key");
+    const adminKey = request.headers.get("X-SBK-Admin-Key");
     const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
-    const isOwner = partnerKey && (partnerKey === partner.business_number || partnerKey === env.SBK_ATTRIBUTION_SECRET);
+    const isOwner = partnerKey && (await verifyPartnerAuthToken(partnerKey, partnerId, env));
 
     if (!isAdmin && !isOwner) {
       return errorResponse("FORBIDDEN", "본인에게 배정된 오퍼 목록만 조회할 수 있습니다.", 403);
@@ -1076,8 +1120,8 @@ async function handleApiRequest(request, url, env) {
     const offerId = matchOfferAccept[1];
     const body = await request.json().catch(() => ({}));
     const partnerId = body.partner_id;
-    const partnerKey = request.headers.get("X-SBK-Partner-Key") || body.partner_key;
-    const adminKey = request.headers.get("X-SBK-Admin-Key") || body.admin_key;
+    const partnerKey = request.headers.get("X-SBK-Partner-Key");
+    const adminKey = request.headers.get("X-SBK-Admin-Key");
 
     if (!partnerId) {
       return errorResponse("PARTNER_ID_REQUIRED", "partner_id가 필요합니다.", 400);
@@ -1100,7 +1144,7 @@ async function handleApiRequest(request, url, env) {
     }
 
     const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
-    const isOwner = partnerKey && (partnerKey === partner.business_number || partnerKey === env.SBK_ATTRIBUTION_SECRET);
+    const isOwner = partnerKey && (await verifyPartnerAuthToken(partnerKey, partnerId, env));
 
     if (offer.partner_id !== partnerId || (!isAdmin && !isOwner)) {
       return errorResponse("FORBIDDEN", "본인에게 배정된 오퍼만 수락할 수 있습니다.", 403);
@@ -1171,8 +1215,8 @@ async function handleApiRequest(request, url, env) {
     const body = await request.json().catch(() => ({}));
     const partnerId = body.partner_id;
     const reason = body.reason || "PARTNER_MANUAL_REJECT";
-    const partnerKey = request.headers.get("X-SBK-Partner-Key") || body.partner_key;
-    const adminKey = request.headers.get("X-SBK-Admin-Key") || body.admin_key;
+    const partnerKey = request.headers.get("X-SBK-Partner-Key");
+    const adminKey = request.headers.get("X-SBK-Admin-Key");
 
     if (!partnerId) {
       return errorResponse("PARTNER_ID_REQUIRED", "partner_id가 필요합니다.", 400);
@@ -1185,7 +1229,7 @@ async function handleApiRequest(request, url, env) {
 
     const partner = await env.DB.prepare("SELECT id, business_number FROM partners WHERE id = ?").bind(partnerId).first();
     const isAdmin = env.SBK_ADMIN_KEY && adminKey === env.SBK_ADMIN_KEY;
-    const isOwner = partner && partnerKey && (partnerKey === partner.business_number || partnerKey === env.SBK_ATTRIBUTION_SECRET);
+    const isOwner = partnerKey && (await verifyPartnerAuthToken(partnerKey, partnerId, env));
 
     if (offer.partner_id !== partnerId || (!isAdmin && !isOwner)) {
       return errorResponse("FORBIDDEN", "본인에게 배정된 오퍼만 거절할 수 있습니다.", 403);
@@ -1242,7 +1286,9 @@ async function handleApiRequest(request, url, env) {
       if (!partner || partner.verification_status !== "APPROVED") {
         return errorResponse("UNAPPROVED_PARTNER", "승인된 파트너만 시공 완료를 접수할 수 있습니다.", 403);
       }
-      if (!partnerKey || (partnerKey !== partner.business_number && partnerKey !== env.SBK_ADMIN_KEY)) {
+      const isPartnerAuth = partnerKey && (await verifyPartnerAuthToken(partnerKey, partnerId, env));
+      const isAdminAuth = env.SBK_ADMIN_KEY && partnerKey === env.SBK_ADMIN_KEY;
+      if (!isPartnerAuth && !isAdminAuth) {
         return errorResponse("UNAUTHORIZED", "파트너 인증 키(X-SBK-Partner-Key)가 유효하지 않습니다.", 401);
       }
 
@@ -1944,9 +1990,15 @@ async function handleApiRequest(request, url, env) {
         nowIso
       ).run();
 
+      let partnerKey = "";
+      try {
+        partnerKey = await generatePartnerAuthToken(pId, env);
+      } catch (_) {}
+
       return jsonResponse({
         ok: true,
         partner_id: pId,
+        partner_key: partnerKey,
         verification_status: decision,
         liability_insurance_status: insuranceStatus,
         message: `파트너 서류 심사가 완료되었습니다: ${decision}`

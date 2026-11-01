@@ -214,7 +214,7 @@
   <script>
     const urlParams = new URLSearchParams(window.location.search);
     const partnerId = urlParams.get('partner_id') || 'partner_sl_master';
-    const partnerKey = urlParams.get('partner_key') || '1234567890';
+    const partnerKey = urlParams.get('partner_key') || localStorage.getItem('sbk_partner_key_' + partnerId) || '';
 
     // Set min date to tomorrow
     const tomorrow = new Date();
@@ -232,7 +232,11 @@
     async function loadSlots() {
       const slotListEl = document.getElementById('slot-list');
       try {
-        const res = await fetch(`/api/v1/slotbridge/slots?partner_id=${encodeURIComponent(partnerId)}`);
+        const headers = {};
+        if (partnerKey) headers['X-SBK-Partner-Key'] = partnerKey;
+        const res = partnerKey
+          ? await fetch(`/api/v1/slotbridge/slots?partner_id=${encodeURIComponent(partnerId)}`, { headers })
+          : await fetch(`/api/v1/slotbridge/slots?partner_id=${encodeURIComponent(partnerId)}`);
         let data = {};
         try { data = await res.json(); } catch (_) {}
         if (res.ok && data.slots) {
@@ -280,11 +284,11 @@
     async function deleteSlot(slotId) {
       if (!confirm('정말 이 가용 슬롯을 취소/삭제하시겠습니까?')) return;
       try {
-        const res = await fetch('/api/v1/slotbridge/slots/' + encodeURIComponent(slotId) + '?partner_key=' + encodeURIComponent(partnerKey), {
+        const headers = {};
+        if (partnerKey) headers['X-SBK-Partner-Key'] = partnerKey;
+        const res = await fetch('/api/v1/slotbridge/slots/' + encodeURIComponent(slotId), {
           method: 'DELETE',
-          headers: {
-            'X-SBK-Partner-Key': partnerKey
-          }
+          headers: headers
         });
         let data = {};
         try { data = await res.json(); } catch (_) {}
@@ -301,7 +305,9 @@
 
     async function checkPartnerOffers() {
       try {
-        const res = await fetch(`/api/v1/slotbridge/offers?partner_id=${encodeURIComponent(partnerId)}&partner_key=${encodeURIComponent(partnerKey)}`);
+        const headers = {};
+        if (partnerKey) headers['X-SBK-Partner-Key'] = partnerKey;
+        const res = await fetch(`/api/v1/slotbridge/offers?partner_id=${encodeURIComponent(partnerId)}`, { headers });
         const data = await res.json();
         if (res.ok && data.offers && data.offers.length > 0) {
           const pending = data.offers.find(o => o.status === 'PENDING' && new Date(o.expires_at) > new Date());

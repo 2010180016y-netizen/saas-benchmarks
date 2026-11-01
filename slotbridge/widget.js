@@ -119,10 +119,14 @@
   if (partnerToken) {
     btn.href = baseUrl + '/slotbridge/inquiry.html?ref=' + encodeURIComponent(partnerId) + '&token=' + encodeURIComponent(partnerToken);
   } else if (partnerKey) {
-    // Authenticated request for signed attribution token from server
+    // Authenticated request for signed attribution token from server via secure header
     try {
-      var tokenEndpoint = baseUrl + '/api/v1/slotbridge/attribution/token?partner_id=' + encodeURIComponent(partnerId) + '&partner_key=' + encodeURIComponent(partnerKey);
-      fetch(tokenEndpoint)
+      var tokenEndpoint = baseUrl + '/api/v1/slotbridge/attribution/token?partner_id=' + encodeURIComponent(partnerId);
+      fetch(tokenEndpoint, {
+        headers: {
+          'X-SBK-Partner-Key': partnerKey
+        }
+      })
         .then(function (res) { return res.json(); })
         .then(function (data) {
           if (data && data.ok && data.token) {

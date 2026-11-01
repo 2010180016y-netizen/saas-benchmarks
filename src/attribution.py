@@ -62,6 +62,10 @@ def verify_attribution_token(token: str, secret: Optional[str] = None) -> Tuple[
     parts = token.split(":")
     partner_id, campaign_id, exp_str, sig = parts
 
+    # Strict signature validation: must be exact 32 or 64 hex characters (P0-02 defense)
+    if not sig or len(sig) not in (32, 64) or not all(c in '0123456789abcdefABCDEF' for c in sig):
+        return False, None
+
     try:
         expires_at = int(exp_str)
     except ValueError:
@@ -76,7 +80,7 @@ def verify_attribution_token(token: str, secret: Optional[str] = None) -> Tuple[
     full_sig = hmac.new(sec.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).hexdigest()
     expected_sig = full_sig[:len(sig)]
 
-    if not hmac.compare_digest(sig, expected_sig):
+    if not hmac.compare_digest(sig.lower(), expected_sig.lower()):
         return False, None # Signature mismatch / tampering
 
     if time.time() > expires_at:
