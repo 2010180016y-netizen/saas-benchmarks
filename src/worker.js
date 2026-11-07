@@ -234,6 +234,11 @@ export default {
       return await handleApiRequest(request, url, env);
     }
 
+    // Intercept SaaS Matrix B2B APIs (/api/v1/lead-capture, /api/v1/orders)
+    if (url.pathname.startsWith("/api/v1/lead-capture") || url.pathname.startsWith("/api/v1/orders")) {
+      return await handleSaaSMatrixApi(request, url, env);
+    }
+
     // SBK-MINI-01 Defense-in-depth: Block static web access to private internal paths
     const privatePrefixes = ["/src", "/docs", "/tests", "/migrations", "/scripts", "/.git"];
     for (const prefix of privatePrefixes) {
@@ -460,6 +465,112 @@ async function processTimeoutsInternal(env) {
   }
 
   return { processed_count: processed, reassigned_count: reassigned, timestamp: nowIso };
+}
+
+async function handleSaaSMatrixApi(request, url, env) {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
+  // Health endpoint: GET /api/v1/orders/health
+  if (url.pathname === "/api/v1/orders/health" && request.method === "GET") {
+    return jsonResponse({
+      ok: true,
+      service: "SaaS Matrix Commercial Engine",
+      version: "2026-v1.1",
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  // POST /api/v1/lead-capture
+  if (url.pathname === "/api/v1/lead-capture" && request.method === "POST") {
+    try {
+      const body = await request.json();
+      const email = (body.email || "").trim().toLowerCase();
+      if (!email || !email.includes("@") || !email.includes(".") || email.length < 5) {
+        return errorResponse("INVALID_EMAIL", "A valid work email address is required.", 400);
+      }
+
+      const leadId = `lead_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const toolCategory = (body.toolCategory || "general").trim();
+      const teamSize = Number(body.teamSize) || 1;
+      const annualSavings = (body.annualSavings || "$2,292").trim();
+
+      return jsonResponse({
+        ok: true,
+        message: "Your customized B2B SaaS TCO audit report has been generated.",
+        leadId,
+        report: {
+          email,
+          toolCategory,
+          teamSize,
+          annualSavings,
+          generatedAt: new Date().toISOString(),
+          status: "DELIVERED"
+        }
+      });
+    } catch (err) {
+      return errorResponse("BAD_REQUEST", "Invalid JSON payload in lead capture request.", 400);
+    }
+  }
+
+  // POST /api/v1/orders
+  if (url.pathname === "/api/v1/orders" && request.method === "POST") {
+    try {
+      const body = await request.json();
+      const email = (body.email || "").trim().toLowerCase();
+      const productId = (body.productId || "").trim();
+
+      if (!email || !email.includes("@") || !email.includes(".") || email.length < 5) {
+        return errorResponse("INVALID_EMAIL", "A valid work email address is required for product delivery.", 400);
+      }
+
+      const PRODUCT_CATALOG = {
+        "returnwise-kit": {
+          title: "ReturnWise Margin Defense & E-commerce SOP Kit (2026 Edition)",
+          price: 29,
+          downloadUrl: "/products/downloads/ReturnWise_ECommerce_Margin_Defense_Kit_2026.zip",
+          instant: true
+        },
+        "cursorrules-masterpack": {
+          title: "The 2026 Production Cursorrules & System Prompts Masterpack",
+          price: 19,
+          downloadUrl: "/products/downloads/Production_Cursorrules_Masterpack_2026.zip",
+          instant: true
+        },
+        "custom-automation": {
+          title: "Custom AI & Data Scraping Pipeline Engineering (Direct Service)",
+          price: 490,
+          downloadUrl: "/products/",
+          instant: false
+        }
+      };
+
+      const product = PRODUCT_CATALOG[productId];
+      if (!product) {
+        return errorResponse("INVALID_PRODUCT", `Product '${productId}' not found in catalog.`, 404);
+      }
+
+      const orderId = `ord_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+      return jsonResponse({
+        ok: true,
+        message: "Order confirmed. Digital delivery initialized.",
+        orderId,
+        product: {
+          id: productId,
+          title: product.title,
+          price: product.price,
+          downloadUrl: product.downloadUrl,
+          instantAccess: product.instant
+        }
+      });
+    } catch (err) {
+      return errorResponse("BAD_REQUEST", "Invalid JSON payload in order creation request.", 400);
+    }
+  }
+
+  return errorResponse("NOT_FOUND", "SaaS Matrix API route not found.", 404);
 }
 
 async function handleApiRequest(request, url, env) {

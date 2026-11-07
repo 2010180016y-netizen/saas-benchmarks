@@ -163,6 +163,82 @@
       color: #64748b;
       margin-top: 0.75rem;
     }
+    /* Modal Styles */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(8px);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+    .modal-overlay.active {
+      display: flex;
+    }
+    .modal-box {
+      background: #ffffff;
+      border-radius: 16px;
+      max-width: 500px;
+      width: 100%;
+      padding: 2rem;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.35);
+      position: relative;
+      box-sizing: border-box;
+    }
+    .modal-close {
+      position: absolute;
+      top: 1.25rem;
+      right: 1.25rem;
+      background: #f1f5f9;
+      border: none;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-weight: 700;
+      color: #64748b;
+      font-size: 1.1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-close:hover { background: #e2e8f0; color: #0f172a; }
+    .form-group { margin-bottom: 1.25rem; }
+    .form-group label { display: block; font-size: 0.875rem; font-weight: 600; color: #334155; margin-bottom: 0.5rem; }
+    .form-input {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      box-sizing: border-box;
+      outline: none;
+    }
+    .form-input:focus { border-color: #0284c7; box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15); }
+    .btn-submit {
+      width: 100%;
+      padding: 0.875rem;
+      border: none;
+      border-radius: 8px;
+      background: #059669;
+      color: #ffffff;
+      font-weight: 700;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .btn-submit:hover { background: #047857; }
+    .success-box {
+      display: none;
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      padding: 1.25rem;
+      border-radius: 12px;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
@@ -203,8 +279,8 @@
           </div>
           <span style="font-size: 0.8rem; font-weight: 600; color: #059669;">58% OFF</span>
         </div>
-        <a href="mailto:hoiki0808@gmail.com?subject=[Purchase%20Request]%20ReturnWise%20Margin%20Defense%20Kit&body=Hello,%20I%20would%20like%20to%20purchase%20the%20ReturnWise%20Kit%20for%20$29.%20Please%20send%20the%20payment%20invoice." class="btn-buy btn-b2b">Get Instant Access ($29)</a>
-        <div class="guarantee-bar">🔒 Instant Delivery via Email / Gumroad</div>
+        <button onclick="openCheckoutModal('returnwise-kit', 'ReturnWise Margin Defense & E-commerce SOP Kit (2026 Edition)', 29)" class="btn-buy btn-b2b" style="cursor: pointer; border: none; font-size: 1rem;">Get Instant Access ($29)</button>
+        <div class="guarantee-bar">🔒 Instant 1-Click Delivery · CSV + SOP Guide Included</div>
       </article>
 
       <!-- Product 2: Cursorrules Masterpack -->
@@ -226,8 +302,8 @@
           </div>
           <span style="font-size: 0.8rem; font-weight: 600; color: #0284c7;">61% OFF</span>
         </div>
-        <a href="mailto:hoiki0808@gmail.com?subject=[Purchase%20Request]%20Cursorrules%20Masterpack%202026&body=Hello,%20I%20would%20like%20to%20purchase%20the%20Cursorrules%20Masterpack%20for%20$19.%20Please%20send%20payment%20instructions." class="btn-buy">Instant Download ($19)</a>
-        <div class="guarantee-bar">⚡ 1-Click Code Generation & Full Source</div>
+        <button onclick="openCheckoutModal('cursorrules-masterpack', 'The 2026 Production Cursorrules & System Prompts Masterpack', 19)" class="btn-buy" style="cursor: pointer; border: none; font-size: 1rem;">Instant Download ($19)</button>
+        <div class="guarantee-bar">⚡ Instant 1-Click Delivery · 50+ Framework Rules</div>
       </article>
 
       <!-- Product 3: Custom Automation Service -->
@@ -249,11 +325,109 @@
           </div>
           <span style="font-size: 0.8rem; font-weight: 600; color: #059669;">B2B CONTRACT</span>
         </div>
-        <a href="mailto:hoiki0808@gmail.com?subject=[B2B%20Project%20Inquiry]%20Custom%20AI%20Automation%20Pipeline&body=Hello,%20I%20am%20interested%20in%20building%20a%20custom%20automation%20pipeline.%20Project%20summary:%0A" class="btn-buy btn-b2b">Book Engineering Slot</a>
+        <button onclick="openCheckoutModal('custom-automation', 'Custom AI & Data Scraping Pipeline Engineering (Direct Service)', 490)" class="btn-buy btn-b2b" style="cursor: pointer; border: none; font-size: 1rem;">Book Engineering Slot</button>
         <div class="guarantee-bar">⏱️ Turnaround: 2-7 Days with Milestone Guarantee</div>
       </article>
     </div>
   </main>
+
+  <!-- Checkout Modal Overlay -->
+  <div id="checkoutModal" class="modal-overlay">
+    <div class="modal-box">
+      <button class="modal-close" onclick="closeCheckoutModal()">&times;</button>
+      <div id="modalFormContainer">
+        <span id="modalProductBadge" style="display: inline-block; font-size: 0.75rem; font-weight: 700; color: #059669; background: #ecfdf5; border: 1px solid #a7f3d0; padding: 2px 8px; border-radius: 9999px; margin-bottom: 0.5rem; text-transform: uppercase;">Instant Digital Delivery</span>
+        <h3 id="modalProductTitle" style="font-size: 1.25rem; font-weight: 700; color: #0f172a; margin: 0 0 0.5rem 0; line-height: 1.3;">Product Title</h3>
+        <p style="font-size: 0.875rem; color: #64748b; margin: 0 0 1.25rem 0;">Zero-friction edge checkout. Enter your work email below to receive the instant download link and license key.</p>
+        
+        <form id="checkoutForm" onsubmit="handleCheckoutSubmit(event)">
+          <div class="form-group">
+            <label for="buyerEmail">Work Email Address (for instant license & download)</label>
+            <input type="email" id="buyerEmail" class="form-input" placeholder="founder@yourcompany.com" required>
+          </div>
+          <div class="form-group">
+            <label>Payment & Settlement Method</label>
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; font-size: 0.875rem; color: #334155; display: flex; align-items: center; justify-content: space-between;">
+              <span>💳 Credit Card / Apple Pay / PayPal</span>
+              <span id="modalProductPrice" style="font-weight: 800; color: #059669;">$29.00</span>
+            </div>
+          </div>
+          <button type="submit" id="submitBtn" class="btn-submit">Confirm & Instant Access</button>
+          <p style="text-align: center; font-size: 0.75rem; color: #94a3b8; margin: 0.75rem 0 0 0;">🔒 256-Bit SSL Encrypted · 30-Day Money Back Guarantee</p>
+        </form>
+      </div>
+
+      <!-- Success Screen -->
+      <div id="modalSuccessBox" class="success-box">
+        <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">🎉</div>
+        <h3 style="font-size: 1.25rem; font-weight: 700; color: #065f46; margin: 0 0 0.5rem 0;">Access Confirmed!</h3>
+        <p style="font-size: 0.875rem; color: #047857; margin-bottom: 1.25rem;">Your license has been provisioned and your download package is ready.</p>
+        <a id="instantDownloadBtn" href="#" class="btn-buy btn-b2b" style="display: block; text-decoration: none; font-size: 1rem; margin-bottom: 0.75rem;">Download Package (.ZIP)</a>
+        <p style="font-size: 0.75rem; color: #64748b; margin: 0;">A confirmation receipt and backup download link have also been sent to your email.</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentProductId = '';
+    let currentPrice = 0;
+
+    function openCheckoutModal(productId, title, price) {
+      currentProductId = productId;
+      currentPrice = price;
+      document.getElementById('modalProductTitle').innerText = title;
+      document.getElementById('modalProductPrice').innerText = '$' + price + '.00';
+      document.getElementById('modalFormContainer').style.display = 'block';
+      document.getElementById('modalSuccessBox').style.display = 'none';
+      document.getElementById('checkoutModal').classList.add('active');
+    }
+
+    function closeCheckoutModal() {
+      document.getElementById('checkoutModal').classList.remove('active');
+    }
+
+    async function handleCheckoutSubmit(e) {
+      e.preventDefault();
+      const email = document.getElementById('buyerEmail').value.trim();
+      const submitBtn = document.getElementById('submitBtn');
+      submitBtn.disabled = true;
+      submitBtn.innerText = 'Processing Order...';
+
+      try {
+        const res = await fetch('/api/v1/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: email,
+            productId: currentProductId,
+            amount: currentPrice,
+            paymentMethod: 'instant_direct'
+          })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          document.getElementById('modalFormContainer').style.display = 'none';
+          document.getElementById('modalSuccessBox').style.display = 'block';
+          if (data.product && data.product.downloadUrl) {
+            const dlBtn = document.getElementById('instantDownloadBtn');
+            dlBtn.href = data.product.downloadUrl;
+            if (data.product.instantAccess) {
+              dlBtn.setAttribute('download', '');
+            }
+          }
+        } else {
+          alert(data.error ? data.error.message : 'Order processing failed. Please try again.');
+          submitBtn.disabled = false;
+          submitBtn.innerText = 'Confirm & Instant Access';
+        }
+      } catch (err) {
+        console.error(err);
+        alert('Network connection error. Please try again.');
+        submitBtn.disabled = false;
+        submitBtn.innerText = 'Confirm & Instant Access';
+      }
+    }
+  </script>
 
   <footer class="site-footer">
     <div class="footer-container">

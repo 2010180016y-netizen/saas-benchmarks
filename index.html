@@ -7,6 +7,52 @@
   <meta name="description" content="Rigorous, data-backed cost and complexity benchmarks for modern software, AI workflows, and automation tools. Built for solopreneurs, developers, and lean teams.">
   <link rel="canonical" href="https://saas-benchmarks.hoiki0808.workers.dev/">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "@id": "https://saas-benchmarks.hoiki0808.workers.dev/#website",
+        "url": "https://saas-benchmarks.hoiki0808.workers.dev/",
+        "name": "SaaS Matrix",
+        "description": "Rigorous, data-backed cost and complexity benchmarks for modern software, AI workflows, and automation tools."
+      },
+      {
+        "@type": "SoftwareApplication",
+        "name": "SaaS Matrix TCO Arbitrage Calculator",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "All",
+        "offers": {
+          "@type": "Offer",
+          "price": "0.00",
+          "priceCurrency": "USD"
+        }
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Why is Make.com so much cheaper than Zapier in 2026?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Zapier charges per task execution, meaning a 5-step workflow consumes 5 tasks. Make charges per scenario operation and bundles multi-step routing, resulting in up to 93% hard-dollar cost savings."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How does Cursor AI deliver higher ROI than standard AI assistants?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Cursor AI utilizes full codebase indexing and multi-file Composer agents, enabling autonomous bug fixing and multi-file refactoring that saves solopreneurs 15+ hours per week."
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
   </style>
@@ -44,7 +90,127 @@
       </p>
     </div>
 
-                <!-- Featured Benchmarks Grid (3 Top Flagships) -->
+    <!-- Live Interactive TCO Arbitrage Calculator Section (Phase 1 Upgrade) -->
+    <section class="mb-16 bg-slate-900/90 border border-slate-800 rounded-3xl p-6 md:p-10 shadow-2xl relative overflow-hidden">
+      <div class="absolute -top-24 -right-24 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
+      <div class="absolute -bottom-24 -left-24 w-96 h-96 bg-teal-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+      <div class="relative z-10">
+        <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+          <div>
+            <span class="text-xs bg-emerald-950 text-emerald-400 border border-emerald-800 px-3 py-1 rounded-full font-mono font-bold tracking-wider uppercase">⚡ Live 2026 TCO Arbitrage Calculator</span>
+            <h2 class="text-2xl md:text-3xl font-extrabold text-white mt-2">Calculate Your Hard-Dollar Software Savings</h2>
+          </div>
+          <span class="text-xs text-slate-400 font-mono bg-slate-950 border border-slate-800 px-3 py-1.5 rounded-lg">Real Benchmark Math · Zero Fluff</span>
+        </div>
+
+        <!-- Tool Comparison Switcher -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-8">
+          <button type="button" onclick="selectCalcTool('automation')" id="toolBtn_automation" class="tool-select-btn px-4 py-3 rounded-xl border border-emerald-500 bg-emerald-950/40 text-emerald-300 font-medium text-xs md:text-sm text-left transition">
+            <span class="block text-slate-400 text-xs">Automation</span>
+            <span class="font-bold">Zapier ➔ Make</span>
+          </button>
+          <button type="button" onclick="selectCalcTool('ai_code')" id="toolBtn_ai_code" class="tool-select-btn px-4 py-3 rounded-xl border border-slate-800 bg-slate-950/60 text-slate-300 font-medium text-xs md:text-sm text-left transition hover:border-slate-700">
+            <span class="block text-slate-400 text-xs">AI Code Editor</span>
+            <span class="font-bold">Copilot ➔ Cursor</span>
+          </button>
+          <button type="button" onclick="selectCalcTool('productivity')" id="toolBtn_productivity" class="tool-select-btn px-4 py-3 rounded-xl border border-slate-800 bg-slate-950/60 text-slate-300 font-medium text-xs md:text-sm text-left transition hover:border-slate-700">
+            <span class="block text-slate-400 text-xs">Productivity AI</span>
+            <span class="font-bold">Motion ➔ Sunsama</span>
+          </button>
+          <button type="button" onclick="selectCalcTool('meeting')" id="toolBtn_meeting" class="tool-select-btn px-4 py-3 rounded-xl border border-slate-800 bg-slate-950/60 text-slate-300 font-medium text-xs md:text-sm text-left transition hover:border-slate-700">
+            <span class="block text-slate-400 text-xs">Meeting Notes</span>
+            <span class="font-bold">Fireflies ➔ Fathom</span>
+          </button>
+        </div>
+
+        <!-- Sliders Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8 bg-slate-950/70 border border-slate-800/80 rounded-2xl p-6">
+          <div>
+            <div class="flex justify-between items-center mb-3">
+              <label for="calcTeamSize" class="text-sm font-semibold text-slate-200">Team / Seat Count</label>
+              <span id="displayTeamSize" class="text-emerald-400 font-mono font-bold text-base bg-emerald-950 border border-emerald-800/80 px-2.5 py-0.5 rounded">3 Users</span>
+            </div>
+            <input type="range" id="calcTeamSize" min="1" max="50" value="3" oninput="updateTcoCalculations()" class="w-full accent-emerald-500 cursor-pointer h-2 bg-slate-800 rounded-lg">
+            <div class="flex justify-between text-xs text-slate-500 font-mono mt-1">
+              <span>1 (Solo)</span>
+              <span>25</span>
+              <span>50 (Growth)</span>
+            </div>
+          </div>
+
+          <div>
+            <div class="flex justify-between items-center mb-3">
+              <label for="calcVolume" id="volumeLabel" class="text-sm font-semibold text-slate-200">Monthly Tasks / API Executions</label>
+              <span id="displayVolume" class="text-teal-400 font-mono font-bold text-base bg-teal-950 border border-teal-800/80 px-2.5 py-0.5 rounded">10,000 Ops</span>
+            </div>
+            <input type="range" id="calcVolume" min="1000" max="100000" step="1000" value="10000" oninput="updateTcoCalculations()" class="w-full accent-teal-500 cursor-pointer h-2 bg-slate-800 rounded-lg">
+            <div class="flex justify-between text-xs text-slate-500 font-mono mt-1">
+              <span>1k</span>
+              <span>50k</span>
+              <span>100k+</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Real-Time Output Cards (3 Columns) -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+          <div class="bg-slate-950/80 border border-rose-950/60 rounded-2xl p-5 text-center">
+            <span class="text-xs uppercase font-mono tracking-wider text-rose-400 font-bold block mb-1">Legacy Stack Spend</span>
+            <div id="outLegacyCost" class="text-2xl md:text-3xl font-extrabold text-rose-300 font-mono">$2,400 <span class="text-xs text-slate-500">/ yr</span></div>
+            <span id="outLegacyDesc" class="text-xs text-slate-400 mt-2 block">Zapier 10k tasks @ $200/mo</span>
+          </div>
+
+          <div class="bg-slate-950/80 border border-slate-800 rounded-2xl p-5 text-center">
+            <span class="text-xs uppercase font-mono tracking-wider text-teal-400 font-bold block mb-1">Modern Lean Stack</span>
+            <div id="outLeanCost" class="text-2xl md:text-3xl font-extrabold text-teal-300 font-mono">$108 <span class="text-xs text-slate-500">/ yr</span></div>
+            <span id="outLeanDesc" class="text-xs text-slate-400 mt-2 block">Make.com Core @ $9/mo</span>
+          </div>
+
+          <div class="bg-gradient-to-br from-emerald-950/80 to-slate-950 border border-emerald-500/50 rounded-2xl p-5 text-center shadow-lg shadow-emerald-950/30">
+            <span class="text-xs uppercase font-mono tracking-wider text-emerald-400 font-bold block mb-1">Annual Hard-Dollar Savings</span>
+            <div id="outSavings" class="text-2xl md:text-3xl font-extrabold text-emerald-300 font-mono">$2,292 <span class="text-xs text-emerald-400 font-bold">(95.5%)</span></div>
+            <span id="outSavingsDesc" class="text-xs text-emerald-400/80 mt-2 block font-medium">Net profit preserved directly in your bank account</span>
+          </div>
+        </div>
+
+        <!-- Dynamic Arbitrage Verdict Box -->
+        <div class="bg-slate-950/90 border-l-4 border-emerald-500 rounded-r-2xl p-5 mb-8">
+          <div class="flex items-center space-x-2 text-xs font-bold text-emerald-400 font-mono uppercase mb-1">
+            <span>Verified TCO Analysis:</span>
+            <span id="arbitrageTitle">Why This Arbitrage Exists</span>
+          </div>
+          <p id="arbitrageExplanation" class="text-sm text-slate-300 leading-relaxed">
+            Zapier charges per discrete task execution; a single 5-step automation burns 5 tasks. Make.com bundles unlimited steps into modular scenarios and provides 10,000 operations for $9/month, resulting in a 29x hard-dollar cost reduction.
+          </p>
+        </div>
+
+        <!-- Action Buttons & Lead Capture -->
+        <div class="flex flex-col lg:flex-row items-center justify-between gap-6 pt-4 border-t border-slate-800/80">
+          <div class="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+            <a id="ctaBenchmarkBtn" href="/make-vs-zapier/" class="px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm transition text-center flex-1 sm:flex-none">
+              Claim Tool Discount (Benchmark) →
+            </a>
+            <a href="/products/" class="px-5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-sm transition text-center flex-1 sm:flex-none">
+              Get Production Setup Kit ($19~$29)
+            </a>
+          </div>
+
+          <!-- Instant Lead Capture Form -->
+          <form id="leadCaptureForm" onsubmit="handleLeadCaptureSubmit(event)" class="w-full lg:w-auto flex flex-col sm:flex-row items-center gap-2">
+            <input type="email" id="leadEmailInput" placeholder="Enter work email for PDF audit" required class="w-full sm:w-64 px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500">
+            <button type="submit" id="leadSubmitBtn" class="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-bold font-mono whitespace-nowrap transition">
+              Dispatch PDF Report
+            </button>
+          </form>
+        </div>
+        <div id="leadCaptureSuccess" class="hidden mt-3 text-xs text-emerald-400 font-mono text-right">
+          ✓ Custom TCO audit calculation dispatched to your email.
+        </div>
+      </div>
+    </section>
+
+    <!-- Featured Benchmarks Grid (3 Top Flagships) -->
     <section class="mb-16">
       <div class="flex items-center justify-between mb-6">
         <h2 class="text-xs uppercase tracking-widest text-indigo-400 font-bold font-mono">Featured Deep Dives (PSA Sourced)</h2>
@@ -170,5 +336,195 @@
       </div>
     </div>
   </footer>
+  <!-- Interactive TCO Calculator & Lead Capture Controller -->
+  <script>
+    const CALC_CONFIG = {
+      automation: {
+        legacyName: 'Zapier',
+        leanName: 'Make.com',
+        volumeLabel: 'Monthly Automation Operations / Tasks',
+        benchmarkUrl: '/make-vs-zapier/',
+        title: 'Why Make.com vs Zapier Arbitrage Exists',
+        explanation: 'Zapier charges per discrete task execution; a single 5-step automation burns 5 tasks. Make.com bundles unlimited steps into modular scenarios and provides 10,000 operations for $9/month, resulting in up to 93% hard-dollar cost savings.',
+        calc: (users, vol) => {
+          let zapMonthly = 19.99;
+          if (vol <= 2000) zapMonthly = 49;
+          else if (vol <= 10000) zapMonthly = 199;
+          else if (vol <= 50000) zapMonthly = 499;
+          else zapMonthly = 999;
+          const legacyAnnual = zapMonthly * 12;
+
+          let makeMonthly = 9;
+          if (vol <= 10000) makeMonthly = 9;
+          else if (vol <= 50000) makeMonthly = 29;
+          else makeMonthly = 59;
+          const leanAnnual = makeMonthly * 12;
+
+          const savings = Math.max(0, legacyAnnual - leanAnnual);
+          const percent = Math.round((savings / legacyAnnual) * 100);
+          return {
+            legacyAnnual,
+            legacyDesc: `Zapier ${vol.toLocaleString()} tasks @ $${zapMonthly}/mo`,
+            leanAnnual,
+            leanDesc: `Make.com Pro @ $${makeMonthly}/mo`,
+            savings,
+            percent
+          };
+        }
+      },
+      ai_code: {
+        legacyName: 'GitHub Copilot',
+        leanName: 'Cursor AI',
+        volumeLabel: 'Monthly Commits & Refactoring Jobs',
+        benchmarkUrl: '/cursor-vs-copilot/',
+        title: 'Multi-File Agent Velocity vs Autocomplete',
+        explanation: 'Copilot functions primarily as single-line autocomplete ($228/seat/yr). Cursor Pro ($240/seat/yr) provides full codebase indexing and multi-file Composer agent execution, saving an estimated 15 hours per developer weekly ($39,000 in dev output).',
+        calc: (users, vol) => {
+          const legacyAnnual = users * 228;
+          const leanAnnual = users * 240;
+          const velocityGain = users * 15000;
+          return {
+            legacyAnnual,
+            legacyDesc: `Copilot Business @ $19/seat/mo (${users} seats)`,
+            leanAnnual,
+            leanDesc: `Cursor Pro @ $20/seat/mo (${users} seats)`,
+            savings: velocityGain,
+            percent: 98,
+            customSavingsText: `$${velocityGain.toLocaleString()} <span class="text-xs text-emerald-400 font-bold">(Net Velocity)</span>`
+          };
+        }
+      },
+      productivity: {
+        legacyName: 'Motion AI',
+        leanName: 'Sunsama + Notion',
+        volumeLabel: 'Tasks & Calendar Events Scheduled / Mo',
+        benchmarkUrl: '/sunsama-vs-motion/',
+        title: 'Intentional Daily Timeboxing vs Algorithmic Chaos',
+        explanation: 'Motion AI costs $228/seat/yr and frequently disrupts workflows with unpredictable auto-rescheduling. Sunsama ($192/seat/yr) focuses on calm, intentional daily shutdown, preventing developer burnout.',
+        calc: (users, vol) => {
+          const legacyAnnual = users * 228;
+          const leanAnnual = users * 192;
+          const savings = legacyAnnual - leanAnnual;
+          const percent = Math.round((savings / legacyAnnual) * 100);
+          return {
+            legacyAnnual,
+            legacyDesc: `Motion AI @ $19/mo annual (${users} seats)`,
+            leanAnnual,
+            leanDesc: `Sunsama @ $16/mo annual (${users} seats)`,
+            savings,
+            percent
+          };
+        }
+      },
+      meeting: {
+        legacyName: 'Fireflies.ai',
+        leanName: 'Fathom',
+        volumeLabel: 'Monthly Meeting Hours Transcribed',
+        benchmarkUrl: '/fathom-vs-fireflies/',
+        title: 'Zero-Minute Cap & Clean Zoom/Meet Bot Integration',
+        explanation: 'Fireflies caps lower tiers and costs $216/seat/yr for full team access. Fathom provides completely free unlimited transcription with a $144/seat/yr Pro tier, eliminating storage quotas and meeting bot anxiety.',
+        calc: (users, vol) => {
+          const legacyAnnual = users * 216;
+          const leanAnnual = users * 144;
+          const savings = legacyAnnual - leanAnnual;
+          const percent = Math.round((savings / legacyAnnual) * 100);
+          return {
+            legacyAnnual,
+            legacyDesc: `Fireflies Pro @ $18/mo (${users} seats)`,
+            leanAnnual,
+            leanDesc: `Fathom Team @ $12/mo (${users} seats)`,
+            savings,
+            percent
+          };
+        }
+      }
+    };
+
+    let activeTool = 'automation';
+
+    function selectCalcTool(toolKey) {
+      activeTool = toolKey;
+      document.querySelectorAll('.tool-select-btn').forEach(btn => {
+        btn.classList.remove('border-emerald-500', 'bg-emerald-950/40', 'text-emerald-300');
+        btn.classList.add('border-slate-800', 'bg-slate-950/60', 'text-slate-300');
+      });
+      const activeBtn = document.getElementById('toolBtn_' + toolKey);
+      if (activeBtn) {
+        activeBtn.classList.remove('border-slate-800', 'bg-slate-950/60', 'text-slate-300');
+        activeBtn.classList.add('border-emerald-500', 'bg-emerald-950/40', 'text-emerald-300');
+      }
+
+      const conf = CALC_CONFIG[toolKey];
+      document.getElementById('volumeLabel').innerText = conf.volumeLabel;
+      document.getElementById('arbitrageTitle').innerText = conf.title;
+      document.getElementById('arbitrageExplanation').innerText = conf.explanation;
+      document.getElementById('ctaBenchmarkBtn').href = conf.benchmarkUrl;
+      document.getElementById('ctaBenchmarkBtn').innerText = `Claim ${conf.leanName} Arbitrage (Benchmark) →`;
+
+      updateTcoCalculations();
+    }
+
+    function updateTcoCalculations() {
+      const users = parseInt(document.getElementById('calcTeamSize').value, 10);
+      const volume = parseInt(document.getElementById('calcVolume').value, 10);
+
+      document.getElementById('displayTeamSize').innerText = `${users} ${users === 1 ? 'User' : 'Users'}`;
+      document.getElementById('displayVolume').innerText = `${volume.toLocaleString()} Ops`;
+
+      const conf = CALC_CONFIG[activeTool];
+      const res = conf.calc(users, volume);
+
+      document.getElementById('outLegacyCost').innerHTML = `$${res.legacyAnnual.toLocaleString()} <span class="text-xs text-slate-500">/ yr</span>`;
+      document.getElementById('outLegacyDesc').innerText = res.legacyDesc;
+
+      document.getElementById('outLeanCost').innerHTML = `$${res.leanAnnual.toLocaleString()} <span class="text-xs text-slate-500">/ yr</span>`;
+      document.getElementById('outLeanDesc').innerText = res.leanDesc;
+
+      if (res.customSavingsText) {
+        document.getElementById('outSavings').innerHTML = res.customSavingsText;
+      } else {
+        document.getElementById('outSavings').innerHTML = `$${res.savings.toLocaleString()} <span class="text-xs text-emerald-400 font-bold">(${res.percent}%)</span>`;
+      }
+    }
+
+    async function handleLeadCaptureSubmit(e) {
+      e.preventDefault();
+      const email = document.getElementById('leadEmailInput').value.trim();
+      const btn = document.getElementById('leadSubmitBtn');
+      btn.disabled = true;
+      btn.innerText = 'Dispatching...';
+
+      try {
+        const res = await fetch('/api/v1/lead-capture', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email,
+            toolCategory: activeTool,
+            teamSize: document.getElementById('calcTeamSize').value,
+            annualSavings: document.getElementById('outSavings').innerText.trim(),
+            source: 'tco_calculator_widget'
+          })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          document.getElementById('leadCaptureForm').style.display = 'none';
+          document.getElementById('leadCaptureSuccess').classList.remove('hidden');
+        } else {
+          alert(data.error ? data.error.message : 'Submission failed');
+          btn.disabled = false;
+          btn.innerText = 'Dispatch PDF Report';
+        }
+      } catch (err) {
+        console.error(err);
+        btn.disabled = false;
+        btn.innerText = 'Dispatch PDF Report';
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      updateTcoCalculations();
+    });
+  </script>
 </body>
 </html>
