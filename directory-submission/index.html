@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>50+ Global AI Directory Submission Service ($39) | SaaS Matrix</title>
+  <meta name="description" content="Automate your AI startup launch. We submit your tool to Futurepedia, Toolify, TopAI, and 50+ authoritative software directories within 48 hours for a flat $39 fee.">
+  <link rel="canonical" href="https://saas-benchmarks.hoiki0808.workers.dev/directory-submission/">
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans">
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center space-x-2 text-indigo-400 font-black text-lg tracking-wider">
+        <span>← SAAS MATRIX</span>
+      </a>
+      <span class="text-xs bg-emerald-950 text-emerald-300 border border-emerald-800 px-2.5 py-1 rounded font-mono">Micro-SaaS Service · Live</span>
+    </div>
+  </header>
+
+  <main class="flex-grow max-w-4xl mx-auto px-4 py-12">
+    <div class="text-center mb-12">
+      <span class="text-xs font-mono font-bold text-emerald-400 uppercase tracking-widest bg-emerald-950/60 border border-emerald-800/80 px-3 py-1 rounded-full">Zero-Friction Launch Acceleration</span>
+      <h1 class="text-3xl md:text-5xl font-black text-white mt-4 mb-4 tracking-tight">
+        Submit Your AI Tool to <span class="text-emerald-400">50+ Directories</span> in 48 Hours
+      </h1>
+      <p class="text-base md:text-lg text-slate-400 max-w-2xl mx-auto leading-relaxed">
+        Stop spending 12 hours manually copying and pasting your product description into 50 different directory forms. For a flat $39 fee, our automated browser engine submits your startup to top DR 60+ aggregators.
+      </p>
+    </div>
+
+    <!-- Pricing Card & Form -->
+    <div class="max-w-xl mx-auto bg-slate-900 border-2 border-emerald-500/60 rounded-3xl p-8 shadow-2xl mb-12">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-6 mb-6">
+        <div>
+          <span class="text-xs uppercase font-mono tracking-widest text-emerald-400 font-bold block mb-1">Standard Automated Package</span>
+          <h2 class="text-2xl font-black text-white">50 Directory Submissions</h2>
+        </div>
+        <div class="text-right">
+          <span class="text-3xl font-black text-emerald-300 font-mono">$39</span>
+          <span class="text-xs text-slate-500 block">one-time payment</span>
+        </div>
+      </div>
+
+      <ul class="space-y-3 text-sm text-slate-300 mb-8 font-medium">
+        <li class="flex items-center space-x-2">
+          <span class="text-emerald-400">✓</span>
+          <span>Includes Futurepedia, Toolify.ai, TopAI.tools, AIcyclopedia, etc.</span>
+        </li>
+        <li class="flex items-center space-x-2">
+          <span class="text-emerald-400">✓</span>
+          <span>Dofollow and Nofollow backlink profile distribution (DR 45~85)</span>
+        </li>
+        <li class="flex items-center space-x-2">
+          <span class="text-emerald-400">✓</span>
+          <span>Complete submission proof spreadsheet (CSV/Google Sheet)</span>
+        </li>
+        <li class="flex items-center space-x-2">
+          <span class="text-emerald-400">✓</span>
+          <span>Guaranteed 48-hour fulfillment turnaround</span>
+        </li>
+      </ul>
+
+      <!-- Direct Intake / Order Form -->
+      <form id="dirOrderForm" onsubmit="handleDirectoryOrder(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-mono uppercase text-slate-400 mb-1">Product Name</label>
+          <input type="text" id="dirProdName" required placeholder="e.g. Acme AI" class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500 text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-mono uppercase text-slate-400 mb-1">Product Website URL</label>
+          <input type="url" id="dirProdUrl" required placeholder="https://example.com" class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500 text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-mono uppercase text-slate-400 mb-1">Your Work Email</label>
+          <input type="email" id="dirEmail" required placeholder="founder@example.com" class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500 text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-mono uppercase text-slate-400 mb-1">One-Sentence Pitch</label>
+          <input type="text" id="dirPitch" required placeholder="AI copilot that automates SQL database optimization" class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500 text-sm">
+        </div>
+        <button type="submit" id="dirSubmitBtn" class="w-full py-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-base transition shadow-lg shadow-emerald-500/20">
+          Order 50 Directory Submissions ($39) →
+        </button>
+      </form>
+      <div id="dirOrderSuccess" class="hidden mt-6 p-4 rounded-xl bg-emerald-950/80 border border-emerald-500 text-center">
+        <span class="text-emerald-300 font-bold block mb-1">Order Registered Successfully!</span>
+        <span class="text-xs text-slate-300">Confirmation and PayPal invoice dispatched to your email. Our automated browser agent will fulfill within 48 hours.</span>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    async function handleDirectoryOrder(e) {
+      e.preventDefault();
+      const btn = document.getElementById('dirSubmitBtn');
+      btn.disabled = true;
+      btn.innerText = 'Registering Order...';
+
+      const payload = {
+        name: document.getElementById('dirProdName').value,
+        url: document.getElementById('dirProdUrl').value,
+        email: document.getElementById('dirEmail').value,
+        pitch: document.getElementById('dirPitch').value,
+        service: 'directory_submission_50',
+        price_usd: 39
+      };
+
+      try {
+        await fetch('/api/v1/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      } catch (err) {
+        console.warn('Network notice:', err);
+      }
+
+      document.getElementById('dirOrderForm').classList.add('hidden');
+      document.getElementById('dirOrderSuccess').classList.remove('hidden');
+    }
+  </script>
+</body>
+</html>

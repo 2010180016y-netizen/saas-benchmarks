@@ -289,28 +289,90 @@
       </div>
     </section>
 
-    <!-- Upcoming Benchmarks Grid -->
+    <!-- Additional Live Benchmarks & Micro-SaaS Grid -->
     <section class="mb-16">
-      <h2 class="text-xs uppercase tracking-widest text-slate-500 font-bold mb-4 font-mono">Upcoming Production Benchmarks</h2>
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-xs uppercase tracking-widest text-indigo-400 font-bold font-mono">Live 2026 Production Benchmarks &amp; Services</h2>
+        <span class="text-xs bg-emerald-950 text-emerald-300 border border-emerald-800 px-2.5 py-1 rounded-full font-mono">Phase 2 Live Sourced</span>
+      </div>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div class="bg-slate-900/50 border border-slate-800/80 rounded-xl p-6">
-          <span class="text-xs font-mono text-purple-400 bg-purple-950/80 border border-purple-900 px-2 py-0.5 rounded">Creator Economy</span>
-          <h4 class="text-lg font-bold text-white mt-3 mb-2">beehiiv vs Substack (2026)</h4>
-          <p class="text-xs text-slate-400 leading-relaxed">Platform take rates compared: 0% flat SaaS fee vs 10% lifetime revenue cut at $1,000+/mo.</p>
-          <span class="inline-block mt-4 text-xs text-slate-500 font-mono">In Peer Review · Testing Complete</span>
-        </div>
-        <div class="bg-slate-900/50 border border-slate-800/80 rounded-xl p-6">
-          <span class="text-xs font-mono text-purple-400 bg-purple-950/80 border border-purple-900 px-2 py-0.5 rounded">AI Code Editors</span>
-          <h4 class="text-lg font-bold text-white mt-3 mb-2">Cursor vs Windsurf vs Copilot</h4>
-          <p class="text-xs text-slate-400 leading-relaxed">Full codebase indexing, multi-file agent execution speed, and token cost per commit benchmarked.</p>
-          <span class="inline-block mt-4 text-xs text-slate-500 font-mono">Benchmark Underway</span>
-        </div>
-        <div class="bg-slate-900/50 border border-slate-800/80 rounded-xl p-6">
-          <span class="text-xs font-mono text-amber-400 bg-amber-950/80 border border-amber-900 px-2 py-0.5 rounded">Backend as a Service</span>
-          <h4 class="text-lg font-bold text-white mt-3 mb-2">Supabase vs Firebase (2026)</h4>
-          <p class="text-xs text-slate-400 leading-relaxed">Cold start latency, Postgres row-level security scaling, and egress fee horror stories compared.</p>
-          <span class="inline-block mt-4 text-xs text-slate-500 font-mono">Data Collection</span>
-        </div>
+        <!-- Lovable vs Bolt -->
+        <a href="/lovable-vs-bolt/" class="block group bg-slate-900 border border-slate-800 hover:border-indigo-500 rounded-xl p-6 transition flex flex-col justify-between">
+          <div>
+            <div class="flex items-center space-x-2 mb-2">
+              <span class="text-xs font-mono text-indigo-400 bg-indigo-950/80 border border-indigo-900 px-2 py-0.5 rounded">AI Web Builders</span>
+              <span class="text-xs text-emerald-400 font-mono font-bold">Save $9,748/yr</span>
+            </div>
+            <h4 class="text-lg font-bold text-white group-hover:text-indigo-300 transition mt-2 mb-2">Lovable.dev vs Bolt.new (2026)</h4>
+            <p class="text-xs text-slate-400 leading-relaxed">Full-stack Supabase RLS recursion handling, token pricing tiers, and rapid prototyping benchmark.</p>
+          </div>
+          <span class="inline-block mt-4 text-xs text-indigo-400 font-mono font-bold group-hover:translate-x-1 transition">Read Benchmark →</span>
+        </a>
+
+        <!-- Beehiiv vs Kit -->
+        <a href="/beehiiv-vs-kit/" class="block group bg-slate-900 border border-slate-800 hover:border-purple-500 rounded-xl p-6 transition flex flex-col justify-between">
+          <div>
+            <div class="flex items-center space-x-2 mb-2">
+              <span class="text-xs font-mono text-purple-400 bg-purple-950/80 border border-purple-900 px-2 py-0.5 rounded">Creator Economy</span>
+              <span class="text-xs text-emerald-400 font-mono font-bold">Save $960/yr</span>
+            </div>
+            <h4 class="text-lg font-bold text-white group-hover:text-purple-300 transition mt-2 mb-2">Beehiiv vs Kit (ConvertKit)</h4>
+            <p class="text-xs text-slate-400 leading-relaxed">Platform take rates (0% vs 3.5%), Cloudflare SSL 525 DNS fixes, and ad network CPM monetization.</p>
+          </div>
+          <span class="inline-block mt-4 text-xs text-purple-400 font-mono font-bold group-hover:translate-x-1 transition">Read Benchmark →</span>
+        </a>
+
+        <!-- Make vs n8n -->
+        <a href="/make-vs-n8n/" class="block group bg-slate-900 border border-slate-800 hover:border-emerald-500 rounded-xl p-6 transition flex flex-col justify-between">
+          <div>
+            <div class="flex items-center space-x-2 mb-2">
+              <span class="text-xs font-mono text-emerald-400 bg-emerald-950/80 border border-emerald-900 px-2 py-0.5 rounded">Workflow Automation</span>
+              <span class="text-xs text-emerald-400 font-mono font-bold">Save 94.0%</span>
+            </div>
+            <h4 class="text-lg font-bold text-white group-hover:text-emerald-300 transition mt-2 mb-2">Make.com vs n8n Docker Self-Hosted</h4>
+            <p class="text-xs text-slate-400 leading-relaxed">40-second webhook timeout error fix on heavy LLM chains vs $12/mo flat VPS hosting.</p>
+          </div>
+          <span class="inline-block mt-4 text-xs text-emerald-400 font-mono font-bold group-hover:translate-x-1 transition">Read Benchmark →</span>
+        </a>
+
+        <!-- Directory Submission Micro-SaaS -->
+        <a href="/directory-submission/" class="block group bg-gradient-to-br from-slate-900 to-emerald-950/30 border border-emerald-500/50 hover:border-emerald-400 rounded-xl p-6 transition flex flex-col justify-between">
+          <div>
+            <div class="flex items-center space-x-2 mb-2">
+              <span class="text-xs font-mono text-emerald-300 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-800">Micro-SaaS Service</span>
+              <span class="text-xs text-emerald-400 font-mono font-bold">$39 Flat Fee</span>
+            </div>
+            <h4 class="text-lg font-bold text-white group-hover:text-emerald-300 transition mt-2 mb-2">50+ Global AI Directory Submission</h4>
+            <p class="text-xs text-slate-400 leading-relaxed">Automated launch distribution to Futurepedia, Toolify, and 50+ high DR aggregators within 48h.</p>
+          </div>
+          <span class="inline-block mt-4 text-xs text-emerald-400 font-mono font-bold group-hover:translate-x-1 transition">Order Service ($39) →</span>
+        </a>
+
+        <!-- Inflearn AI Roadmap -->
+        <a href="/inflearn-ai-roadmap/" class="block group bg-slate-900 border border-slate-800 hover:border-teal-500 rounded-xl p-6 transition flex flex-col justify-between">
+          <div>
+            <div class="flex items-center space-x-2 mb-2">
+              <span class="text-xs font-mono text-teal-400 bg-teal-950/80 border border-teal-900 px-2 py-0.5 rounded">코딩 &amp; 자동화 강의</span>
+              <span class="text-xs text-teal-400 font-mono font-bold">인프런 14% 제휴</span>
+            </div>
+            <h4 class="text-lg font-bold text-white group-hover:text-teal-300 transition mt-2 mb-2">2026 AI 바이브 코딩 &amp; 업무 자동화</h4>
+            <p class="text-xs text-slate-400 leading-relaxed">외주 개발비 500만 원 아끼는 비전공자 맞춤 Cursor, Claude, n8n 실전 커리큘럼 큐레이션.</p>
+          </div>
+          <span class="inline-block mt-4 text-xs text-teal-400 font-mono font-bold group-hover:translate-x-1 transition">강의 로드맵 보기 →</span>
+        </a>
+
+        <!-- NordVPN vs Surfshark -->
+        <a href="/nordvpn-vs-surfshark/" class="block group bg-slate-900 border border-slate-800 hover:border-blue-500 rounded-xl p-6 transition flex flex-col justify-between">
+          <div>
+            <div class="flex items-center space-x-2 mb-2">
+              <span class="text-xs font-mono text-blue-400 bg-blue-950/80 border border-blue-900 px-2 py-0.5 rounded">Remote Security</span>
+              <span class="text-xs text-emerald-400 font-mono font-bold">Dedicated IP</span>
+            </div>
+            <h4 class="text-lg font-bold text-white group-hover:text-blue-300 transition mt-2 mb-2">NordVPN vs Surfshark (2026)</h4>
+            <p class="text-xs text-slate-400 leading-relaxed">Dedicated IP setup for remote Stripe &amp; banking operations without automated AML freeze risks.</p>
+          </div>
+          <span class="inline-block mt-4 text-xs text-blue-400 font-mono font-bold group-hover:translate-x-1 transition">Read Benchmark →</span>
+        </a>
       </div>
     </section>
 
